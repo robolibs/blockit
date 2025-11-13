@@ -33,6 +33,72 @@ A type-safe, template-based blockchain library for C++20 with generic participan
 - **🆕 Persistent Storage**: Complete file I/O for blockchain persistence in both formats
 - **🆕 Backward Compatibility**: Existing JSON-based code continues to work unchanged
 - **🆕 Performance Optimization**: Binary format offers 3.7x faster serialization speed
+- **🆕 SQLite Integration**: Fast queryable storage with blockchain anchoring
+- **🆕 Unified API**: `blockit::Blockit<T>` manages blockchain + database atomically
+- **🆕 Cryptographic Anchoring**: Link database records to blockchain with SHA256 hashes
+- **🆕 Schema Extensions**: Users define custom tables, indexes, and full-text search
+- **🆕 Automatic Anchoring**: Database records automatically anchored when blocks commit
+
+## Complete Stack - Blockchain + Database
+
+Blockit provides a **unified API** that seamlessly combines blockchain immutability with fast database queries:
+
+```cpp
+#include <blockit.hpp>
+
+// 1. Define your data type
+struct Document {
+    std::string id, title, content;
+    std::string to_string() const { return title; }
+    std::vector<uint8_t> toBytes() const { /* serialize */ }
+};
+
+// 2. Define your database schema
+class DocSchema : public blockit::storage::ISchemaExtension {
+    std::vector<std::string> getCreateTableStatements() const override {
+        return {"CREATE TABLE documents (...)", "CREATE VIRTUAL TABLE docs_fts ..."};
+    }
+    std::vector<std::string> getCreateIndexStatements() const override {
+        return {"CREATE INDEX idx_author ON documents(author)"};
+    }
+};
+
+// 3. Initialize unified store (manages both blockchain and database)
+blockit::Blockit<Document> store;
+store.initialize("myapp.db", "MyChain", "genesis", genesis_doc, crypto);
+store.registerSchema(DocSchema{});
+
+// 4. Create records (stored in database)
+store.getStorage().executeSql("INSERT INTO documents ...");
+
+// 5. Register for blockchain anchoring
+store.createTransaction("tx_001", doc, "doc_001", doc.toBytes(), 100);
+
+// 6. Commit to blockchain - ONE CALL DOES EVERYTHING:
+//    ✓ Adds block to blockchain
+//    ✓ Stores transactions in database
+//    ✓ Creates cryptographic anchors linking them
+store.addBlock(transactions);
+
+// 7. Fast database queries
+store.getStorage().executeQuery("SELECT * FROM documents WHERE author = ?", ...);
+
+// 8. Cryptographic verification
+store.verifyContent("doc_001", current_bytes);  // ✓ Verified against blockchain!
+
+// 9. Access both layers directly when needed
+store.getChain();    // blockchain
+store.getStorage();  // database
+```
+
+### Key Benefits
+
+- **Atomic Operations**: Blockchain and database stay in sync automatically
+- **Fast Queries**: SQLite indexes, full-text search, complex filters
+- **Immutability**: Every database record cryptographically anchored to blockchain
+- **Verification**: Recompute hash and verify against blockchain at any time
+- **Flexibility**: Define your own schema, tables, indexes
+- **Type-Safe**: Template-based like the rest of Blockit
 
 ## Unified Serialization System
 
@@ -579,11 +645,74 @@ make
 
 ```bash
 cd build
-./main              # Original basic demo with persistent storage
-./enhanced_demo     # Robot coordination demo  
-./farming_demo      # Agricultural industry demo
-./test_storage      # Comprehensive storage functionality tests
+./main                    # Original basic demo with persistent storage
+./enhanced_demo           # Robot coordination demo  
+./farming_demo            # Agricultural industry demo
+./complete_stack_demo     # 🆕 Complete stack: Blockchain + Database (RECOMMENDED)
+./unified_api_demo        # 🆕 Unified API basics
+./sqlite_integration_demo # SQLite integration example
+./test_storage            # Comprehensive storage functionality tests
+./test_sqlite_store       # SQLite storage tests (9 test cases, 139 assertions)
 ```
+
+### Featured Example: Complete Stack Demo
+
+The **complete_stack_demo** shows the recommended way to use Blockit in production:
+
+```bash
+./complete_stack_demo
+```
+
+Output:
+```
+📦 Initializing storage...
+   ✓ Database opened
+   ✓ Blockchain initialized
+
+📋 Registering document schema...
+   ✓ Tables created
+   ✓ Indexes created  
+   ✓ Full-text search enabled
+
+📝 Creating documents...
+   ✓ Created: Introduction to Blockchain
+   ✓ Created: Database Performance Tips
+   ✓ Created: Cryptographic Anchoring
+
+⛓️  Committing to blockchain...
+   ✓ Block added
+   ✓ Transactions stored
+   ✓ Anchors created                    ← ALL ATOMIC!
+
+✏️  Updating document...
+   ✓ DOC001 updated to v2
+   ✓ Update anchored to blockchain
+
+🔍 Full-text search for 'blockchain'
+📁 Documents in 'technology' category
+👤 Documents by Alice Smith
+
+🔐 Verifying document integrity...
+   ✓ All documents verified against blockchain
+
+📊 System Statistics:
+   Blocks: 3 | Transactions: 4 | Anchors: 3
+
+✓ Blockchain and database are synchronized
+```
+
+**Features demonstrated:**
+- ✅ Custom data types (Document)
+- ✅ Custom database schema (tables, indexes, FTS)
+- ✅ Application layer (DocumentManager)
+- ✅ CRUD operations with versioning
+- ✅ Fast queries (category, author filters)
+- ✅ Full-text search on content
+- ✅ Automatic blockchain anchoring
+- ✅ Cryptographic verification
+- ✅ Complete real-world usage pattern
+
+### Other Examples
 
 The **original example** demonstrates:
 - Generic template usage with `StringWrapper` 
@@ -641,9 +770,275 @@ This implementation is **still not** production ready and lacks several critical
 ## Not gonna be part of this library
 - Fork resolution
 
+## SQLite Integration for Fast Queries
+
+Blockit provides a powerful SQLite integration layer that combines blockchain immutability with fast query capabilities. The library manages core ledger tables (blocks, transactions, anchors) while allowing you to define your own domain-specific schemas.
+
+### Key Features
+
+- **Fast Queries**: Millisecond-speed queries on large datasets using SQLite indexes
+- **Blockchain Anchoring**: Link your data to on-chain transactions with cryptographic hashes
+- **Schema Extensions**: Define your own tables and indexes that reference the core ledger
+- **Verification**: Verify data integrity by comparing against on-chain hashes
+- **Flexible**: Use any schema design that fits your application needs
+
+### Recommended: Use the Unified API
+
+For most applications, use `blockit::Blockit<T>` which handles both blockchain and database together:
+
+```cpp
+#include <blockit.hpp>
+
+// See complete_stack_demo.cpp for full example
+blockit::Blockit<YourType> store;
+store.initialize("myapp.db", "MyChain", ...);
+store.registerSchema(your_schema);
+store.addBlock(transactions);  // ← Handles everything atomically
+```
+
+### Direct Storage API (Advanced)
+
+For direct storage layer access without blockchain:
+
+```cpp
+#include <blockit/storage/sqlite_store.hpp>
+#include <blockit/storage/sqlite_store_impl.hpp>
+
+using namespace blockit::storage;
+
+// 1. Define your domain data
+struct UserRecord {
+    std::string user_id;
+    std::string name;
+    std::string email;
+    
+    std::vector<uint8_t> toBytes() const {
+        std::string data = user_id + "|" + name + "|" + email;
+        return std::vector<uint8_t>(data.begin(), data.end());
+    }
+};
+
+// 2. Define your custom schema extension
+class UserSchemaExtension : public ISchemaExtension {
+public:
+    std::vector<std::string> getCreateTableStatements() const override {
+        return {
+            R"(CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                content_hash BLOB,
+                FOREIGN KEY(user_id) REFERENCES anchors(content_id) ON DELETE CASCADE
+            ))"
+        };
+    }
+    
+    std::vector<std::string> getCreateIndexStatements() const override {
+        return {
+            "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)"
+        };
+    }
+};
+
+// 3. Use the storage layer
+SqliteStore store;
+store.open("myapp.db");
+store.initializeCoreSchema();
+
+// 4. Register your schema extension
+UserSchemaExtension user_schema;
+store.registerExtension(user_schema);
+
+// 5. Store data and create anchor
+UserRecord user{"user_001", "Alice", "alice@example.com"};
+auto content_hash = computeSHA256(user.toBytes());
+
+// Insert into your custom table
+store.executeSql("INSERT INTO users (user_id, name, email, content_hash) VALUES (...)");
+
+// 6. When blockchain transaction is confirmed, create anchor
+TxRef tx_ref("tx_abc123", 42, merkle_root);
+store.createAnchor("user_001", content_hash, tx_ref);
+
+// 7. Verify data integrity at any time
+if (store.verifyAnchor("user_001", user.toBytes())) {
+    std::cout << "User data verified against blockchain!\n";
+}
+```
+
+### Core Ledger Schema
+
+The library automatically manages these tables:
+
+```sql
+-- Blocks table (indexed by height and hash)
+CREATE TABLE blocks (
+    height INTEGER PRIMARY KEY,
+    hash TEXT NOT NULL UNIQUE,
+    previous_hash TEXT NOT NULL,
+    merkle_root TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,
+    nonce INTEGER NOT NULL
+);
+
+-- Transactions table (indexed by block and timestamp)
+CREATE TABLE transactions (
+    tx_id TEXT PRIMARY KEY,
+    block_height INTEGER NOT NULL,
+    timestamp INTEGER NOT NULL,
+    priority INTEGER NOT NULL,
+    payload BLOB NOT NULL,
+    FOREIGN KEY(block_height) REFERENCES blocks(height)
+);
+
+-- Anchors table (links your data to blockchain)
+CREATE TABLE anchors (
+    content_id TEXT PRIMARY KEY,
+    content_hash BLOB NOT NULL,
+    tx_id TEXT NOT NULL,
+    block_height INTEGER NOT NULL,
+    merkle_root BLOB NOT NULL,
+    anchored_at INTEGER NOT NULL,
+    FOREIGN KEY(tx_id) REFERENCES transactions(tx_id),
+    FOREIGN KEY(block_height) REFERENCES blocks(height)
+);
+```
+
+### Your Schema Extension
+
+You control your own tables:
+
+```cpp
+class MyAppSchema : public ISchemaExtension {
+public:
+    std::vector<std::string> getCreateTableStatements() const override {
+        return {
+            // Your domain tables can reference core ledger via FKs
+            R"(CREATE TABLE IF NOT EXISTS documents (
+                doc_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                author TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY(doc_id) REFERENCES anchors(content_id)
+            ))",
+            
+            // Full-text search (optional)
+            R"(CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts 
+               USING fts5(doc_id UNINDEXED, title, content))"
+        };
+    }
+    
+    std::vector<std::string> getCreateIndexStatements() const override {
+        return {
+            "CREATE INDEX IF NOT EXISTS idx_docs_author ON documents(author)",
+            "CREATE INDEX IF NOT EXISTS idx_docs_created ON documents(created_at)"
+        };
+    }
+    
+    // Optional: schema migrations for version upgrades
+    std::vector<std::pair<int32_t, std::vector<std::string>>> getMigrations() const override {
+        return {
+            {2, {"ALTER TABLE documents ADD COLUMN tags TEXT"}}
+        };
+    }
+};
+```
+
+### Common Patterns
+
+**Pattern 1: Fast Queries + Blockchain Verification**
+
+```cpp
+// Query with SQLite speed
+store.executeQuery("SELECT * FROM documents WHERE author = 'Alice' ORDER BY created_at DESC",
+    [](const std::vector<std::string>& row) {
+        std::cout << "Doc: " << row[0] << "\n";
+    });
+
+// Verify specific document against blockchain
+std::vector<uint8_t> current_content = loadDocumentContent("doc_123");
+if (store.verifyAnchor("doc_123", current_content)) {
+    std::cout << "Document integrity verified!\n";
+}
+```
+
+**Pattern 2: Range Queries on Blockchain Data**
+
+```cpp
+// Query transactions in a block range
+LedgerQuery query;
+query.block_height_min = 100;
+query.block_height_max = 200;
+auto tx_ids = store.queryTransactions(query);
+
+// Get all anchors for those blocks
+auto anchors = store.getAnchorsInRange(100, 200);
+```
+
+**Pattern 3: Full-Text Search with Blockchain Backing**
+
+```cpp
+// Fast FTS query
+store.executeQuery("SELECT doc_id FROM documents_fts WHERE documents_fts MATCH 'blockchain'",
+    [&](const std::vector<std::string>& row) {
+        // Each result is cryptographically anchored
+        auto anchor = store.getAnchor(row[0]);
+        std::cout << "Found doc " << row[0] << " at block " << anchor->block_height << "\n";
+    });
+```
+
+### Configuration
+
+```cpp
+OpenOptions opts;
+opts.enable_wal = true;                           // Write-Ahead Logging for performance
+opts.enable_foreign_keys = true;                  // Enforce referential integrity
+opts.sync_mode = OpenOptions::Synchronous::NORMAL; // Balance safety and speed
+opts.busy_timeout_ms = 5000;                      // Concurrent access timeout
+opts.cache_size_kb = 20000;                       // ~20MB cache
+
+store.open("myapp.db", opts);
+```
+
+### Examples
+
+See `examples/sqlite_integration_demo.cpp` for a complete example with:
+- Custom schema definition
+- User creation and anchoring workflow
+- Verification and integrity checking
+- Range queries and statistics
+- Full-text search integration
+
+Run the example:
+```bash
+cd build
+./sqlite_integration_demo
+```
+
+### Testing
+
+Comprehensive test suite in `test/test_sqlite_store.cpp`:
+```bash
+cd build
+./test_sqlite_store
+```
+
+Tests cover:
+- Core database operations
+- Block and transaction storage
+- Anchor creation and verification
+- Schema extensions
+- Transaction guards (RAII)
+- Query operations
+- Chain continuity verification
+- Diagnostics and statistics
+
 ## Dependencies
 
 - **Lockey**: Cryptographic library for signing and verification
+- **SQLite3**: Core SQLite library (system)
+- **SQLiteCpp**: C++ wrapper for SQLite (fetched automatically)
 - **C++20**: Modern C++ features
 - **CMake 3.15+**: Build system
 

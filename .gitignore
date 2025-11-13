@@ -2,3 +2,4 @@
 .quickfix
 build
 compile_commands.json
+PLAN.md

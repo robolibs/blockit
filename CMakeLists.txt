@@ -24,7 +24,12 @@ include(FetchContent)
 set(ext_deps)
 FetchContent_Declare(lockey GIT_REPOSITORY https://github.com/onlyhead/lockey.git GIT_TAG 0.3.0)
 FetchContent_MakeAvailable(lockey)
-list(APPEND ext_deps lockey::lockey) 
+list(APPEND ext_deps lockey::lockey)
+
+# --------------------------------------------------------------------------------------------------
+# SQLite3 (C API only)
+find_package(SQLite3 REQUIRED)
+list(APPEND ext_deps SQLite::SQLite3)
 
 # --------------------------------------------------------------------------------------------------
 add_library(${project_name} INTERFACE)
