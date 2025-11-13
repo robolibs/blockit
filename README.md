@@ -33,6 +33,72 @@ A type-safe, template-based blockchain library for C++20 with generic participan
 - **🆕 Persistent Storage**: Complete file I/O for blockchain persistence in both formats
 - **🆕 Backward Compatibility**: Existing JSON-based code continues to work unchanged
 - **🆕 Performance Optimization**: Binary format offers 3.7x faster serialization speed
+- **🆕 SQLite Integration**: Fast queryable storage with blockchain anchoring
+- **🆕 Unified API**: `blockit::Blockit<T>` manages blockchain + database atomically
+- **🆕 Cryptographic Anchoring**: Link database records to blockchain with SHA256 hashes
+- **🆕 Schema Extensions**: Users define custom tables, indexes, and full-text search
+- **🆕 Automatic Anchoring**: Database records automatically anchored when blocks commit
+
+## Complete Stack - Blockchain + Database
+
+Blockit provides a **unified API** that seamlessly combines blockchain immutability with fast database queries:
+
+```cpp
+#include <blockit.hpp>
+
+// 1. Define your data type
+struct Document {
+    std::string id, title, content;
+    std::string to_string() const { return title; }
+    std::vector<uint8_t> toBytes() const { /* serialize */ }
+};
+
+// 2. Define your database schema
+class DocSchema : public blockit::storage::ISchemaExtension {
+    std::vector<std::string> getCreateTableStatements() const override {
+        return {"CREATE TABLE documents (...)", "CREATE VIRTUAL TABLE docs_fts ..."};
+    }
+    std::vector<std::string> getCreateIndexStatements() const override {
+        return {"CREATE INDEX idx_author ON documents(author)"};
+    }
+};
+
+// 3. Initialize unified store (manages both blockchain and database)
+blockit::Blockit<Document> store;
+store.initialize("myapp.db", "MyChain", "genesis", genesis_doc, crypto);
+store.registerSchema(DocSchema{});
+
+// 4. Create records (stored in database)
+store.getStorage().executeSql("INSERT INTO documents ...");
+
+// 5. Register for blockchain anchoring
+store.createTransaction("tx_001", doc, "doc_001", doc.toBytes(), 100);
+
+// 6. Commit to blockchain - ONE CALL DOES EVERYTHING:
+//    ✓ Adds block to blockchain
+//    ✓ Stores transactions in database
+//    ✓ Creates cryptographic anchors linking them
+store.addBlock(transactions);
+
+// 7. Fast database queries
+store.getStorage().executeQuery("SELECT * FROM documents WHERE author = ?", ...);
+
+// 8. Cryptographic verification
+store.verifyContent("doc_001", current_bytes);  // ✓ Verified against blockchain!
+
+// 9. Access both layers directly when needed
+store.getChain();    // blockchain
+store.getStorage();  // database
+```
+
+### Key Benefits
+
+- **Atomic Operations**: Blockchain and database stay in sync automatically
+- **Fast Queries**: SQLite indexes, full-text search, complex filters
+- **Immutability**: Every database record cryptographically anchored to blockchain
+- **Verification**: Recompute hash and verify against blockchain at any time
+- **Flexibility**: Define your own schema, tables, indexes
+- **Type-Safe**: Template-based like the rest of Blockit
 
 ## Unified Serialization System
 
@@ -579,11 +645,74 @@ make
 
 ```bash
 cd build
-./main              # Original basic demo with persistent storage
-./enhanced_demo     # Robot coordination demo  
-./farming_demo      # Agricultural industry demo
-./test_storage      # Comprehensive storage functionality tests
+./main                    # Original basic demo with persistent storage
+./enhanced_demo           # Robot coordination demo  
+./farming_demo            # Agricultural industry demo
+./complete_stack_demo     # 🆕 Complete stack: Blockchain + Database (RECOMMENDED)
+./unified_api_demo        # 🆕 Unified API basics
+./sqlite_integration_demo # SQLite integration example
+./test_storage            # Comprehensive storage functionality tests
+./test_sqlite_store       # SQLite storage tests (9 test cases, 139 assertions)
 ```
+
+### Featured Example: Complete Stack Demo
+
+The **complete_stack_demo** shows the recommended way to use Blockit in production:
+
+```bash
+./complete_stack_demo
+```
+
+Output:
+```
+📦 Initializing storage...
+   ✓ Database opened
+   ✓ Blockchain initialized
+
+📋 Registering document schema...
+   ✓ Tables created
+   ✓ Indexes created  
+   ✓ Full-text search enabled
+
+📝 Creating documents...
+   ✓ Created: Introduction to Blockchain
+   ✓ Created: Database Performance Tips
+   ✓ Created: Cryptographic Anchoring
+
+⛓️  Committing to blockchain...
+   ✓ Block added
+   ✓ Transactions stored
+   ✓ Anchors created                    ← ALL ATOMIC!
+
+✏️  Updating document...
+   ✓ DOC001 updated to v2
+   ✓ Update anchored to blockchain
+
+🔍 Full-text search for 'blockchain'
+📁 Documents in 'technology' category
+👤 Documents by Alice Smith
+
+🔐 Verifying document integrity...
+   ✓ All documents verified against blockchain
+
+📊 System Statistics:
+   Blocks: 3 | Transactions: 4 | Anchors: 3
+
+✓ Blockchain and database are synchronized
+```
+
+**Features demonstrated:**
+- ✅ Custom data types (Document)
+- ✅ Custom database schema (tables, indexes, FTS)
+- ✅ Application layer (DocumentManager)
+- ✅ CRUD operations with versioning
+- ✅ Fast queries (category, author filters)
+- ✅ Full-text search on content
+- ✅ Automatic blockchain anchoring
+- ✅ Cryptographic verification
+- ✅ Complete real-world usage pattern
+
+### Other Examples
 
 The **original example** demonstrates:
 - Generic template usage with `StringWrapper` 
@@ -653,7 +782,23 @@ Blockit provides a powerful SQLite integration layer that combines blockchain im
 - **Verification**: Verify data integrity by comparing against on-chain hashes
 - **Flexible**: Use any schema design that fits your application needs
 
-### Quick Start
+### Recommended: Use the Unified API
+
+For most applications, use `blockit::Blockit<T>` which handles both blockchain and database together:
+
+```cpp
+#include <blockit.hpp>
+
+// See complete_stack_demo.cpp for full example
+blockit::Blockit<YourType> store;
+store.initialize("myapp.db", "MyChain", ...);
+store.registerSchema(your_schema);
+store.addBlock(transactions);  // ← Handles everything atomically
+```
+
+### Direct Storage API (Advanced)
+
+For direct storage layer access without blockchain:
 
 ```cpp
 #include <blockit/storage/sqlite_store.hpp>
