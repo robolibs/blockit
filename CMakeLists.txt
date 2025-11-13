@@ -27,13 +27,9 @@ FetchContent_MakeAvailable(lockey)
 list(APPEND ext_deps lockey::lockey)
 
 # --------------------------------------------------------------------------------------------------
-# SQLite3 (C) and SQLiteCpp (C++)
+# SQLite3 (C API only)
 find_package(SQLite3 REQUIRED)
 list(APPEND ext_deps SQLite::SQLite3)
-
-FetchContent_Declare(SQLiteCpp GIT_REPOSITORY https://github.com/SRombauts/SQLiteCpp.git GIT_TAG 3.3.1)
-FetchContent_MakeAvailable(SQLiteCpp)
-list(APPEND ext_deps SQLiteCpp)
 
 # --------------------------------------------------------------------------------------------------
 add_library(${project_name} INTERFACE)
