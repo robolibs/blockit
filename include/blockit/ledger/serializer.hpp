@@ -2,13 +2,12 @@
 
 #include <cstdint>
 #include <cstring>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <vector>
 
-namespace chain {
+namespace blockit::ledger {
 
     // Enhanced SFINAE detection for serialization capabilities
     template <typename T> class has_binary_serialize {
@@ -17,8 +16,8 @@ namespace chain {
         template <typename> static std::false_type test_binary_serialize(...);
 
         template <typename U>
-        static auto test_binary_deserialize(int) -> decltype(U::deserializeBinary(std::declval<std::vector<uint8_t>>()),
-                                                             std::true_type{});
+        static auto test_binary_deserialize(int)
+            -> decltype(U::deserializeBinary(std::declval<std::vector<uint8_t>>()), std::true_type{});
         template <typename> static std::false_type test_binary_deserialize(...);
 
       public:
@@ -33,8 +32,8 @@ namespace chain {
         template <typename> static std::false_type test_json_serialize(...);
 
         template <typename U>
-        static auto test_json_deserialize(int) -> decltype(U::deserialize(std::declval<std::string>()),
-                                                           std::true_type{});
+        static auto test_json_deserialize(int)
+            -> decltype(U::deserialize(std::declval<std::string>()), std::true_type{});
         template <typename> static std::false_type test_json_deserialize(...);
 
       public:
@@ -328,4 +327,4 @@ namespace chain {
         static constexpr bool supportsJson() { return has_json_serialize<T>::value; }
     };
 
-} // namespace chain
+} // namespace blockit::ledger

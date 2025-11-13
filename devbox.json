@@ -23,7 +23,9 @@
     "libsodium@latest",
     "libsodium.dev",
     "grpc@latest",
-    "protobuf@latest"
+    "protobuf@latest",
+    "sqlite@latest",
+    "sqlite.dev"
   ],
   "shell": {
     "init_hook": [

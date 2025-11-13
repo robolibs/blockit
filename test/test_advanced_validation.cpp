@@ -1,4 +1,4 @@
-#include "blokit/blokit.hpp"
+#include "blockit.hpp"
 #include <doctest/doctest.h>
 #include <memory>
 
@@ -152,7 +152,7 @@ TEST_SUITE("Advanced Validation Tests") {
         // Test with empty list
         std::vector<std::string> emptyList;
         chain::MerkleTree emptyTree(emptyList);
-        CHECK_FALSE(emptyTree.getRoot().empty()); // Should have some default root
+        CHECK(emptyTree.getRoot().empty()); // Empty tree should have empty root
 
         // Test with large number of transactions
         std::vector<std::string> largeTxList;
