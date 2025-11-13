@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.1] - 2025-11-13
+
+### <!-- 2 -->🚜 Refactor
+
+- Split large header-only library into modules
+
 ## [0.2.0] - 2025-11-13
 
 ### <!-- 0 -->⛰️  Features
