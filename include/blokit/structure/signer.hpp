@@ -94,7 +94,7 @@ namespace chain {
     // Load public key from PEM - extract the actual hex-encoded public key
     inline EVP_PKEY *loadPublicKeyFromPEM(const std::string &pemPublic) {
         EVP_PKEY *key = new EVP_PKEY();
-        key->algorithm = lockey::Lockey::Algorithm::RSA_2048;
+        key->algorithm = lockey::Lockey::Algorithm::Ed25519;
 
         // Extract the base64 content between BEGIN and END
         std::string base64Data;
@@ -188,7 +188,7 @@ namespace chain {
     class Crypto {
       public:
         inline Crypto(const std::string &keyFile)
-            : algorithm_(lockey::Lockey::Algorithm::RSA_2048), crypto_(algorithm_) {
+            : algorithm_(lockey::Lockey::Algorithm::Ed25519), crypto_(algorithm_) {
             // Generate a new keypair (in real implementation, would load from file)
             keypair_ = crypto_.generate_keypair();
             if (!keypair_.private_key.empty()) {

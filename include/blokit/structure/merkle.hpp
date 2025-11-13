@@ -15,7 +15,7 @@ namespace chain {
 
         // Hash function using Lockey
         inline std::string hashData(const std::string &data) const {
-            lockey::Lockey crypto(lockey::Lockey::Algorithm::AES_256_GCM, lockey::Lockey::HashAlgorithm::SHA256);
+            lockey::Lockey crypto(lockey::Lockey::Algorithm::XChaCha20_Poly1305, lockey::Lockey::HashAlgorithm::SHA256);
             std::vector<uint8_t> data_vec(data.begin(), data.end());
             auto hash_result = crypto.hash(data_vec);
 

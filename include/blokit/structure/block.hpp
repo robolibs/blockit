@@ -57,7 +57,7 @@ namespace chain {
             ss << merkle_root_;
 
             // Use lockey hash function and convert to hex
-            lockey::Lockey crypto(lockey::Lockey::Algorithm::AES_256_GCM, lockey::Lockey::HashAlgorithm::SHA256);
+            lockey::Lockey crypto(lockey::Lockey::Algorithm::XChaCha20_Poly1305, lockey::Lockey::HashAlgorithm::SHA256);
             std::string data = ss.str();
             std::vector<uint8_t> data_vec(data.begin(), data.end());
             auto hash_result = crypto.hash(data_vec);
