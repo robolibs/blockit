@@ -12,6 +12,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED On)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(params
     -Wno-reorder
+    -Wno-address
+    -Wno-unused-function
     -Wno-unused-parameter
 )
 
@@ -32,13 +34,18 @@ find_package(SQLite3 REQUIRED)
 list(APPEND ext_deps SQLite::SQLite3)
 
 # --------------------------------------------------------------------------------------------------
-add_library(${project_name} INTERFACE)
+# Build library - automatically find all source files
+file(GLOB_RECURSE blockit_sources CONFIGURE_DEPENDS src/*.cpp)
+
+# Create a compiled library instead of INTERFACE
+add_library(${project_name} ${blockit_sources})
 # Allow users to link via `${project_name}::${project_name}`
 add_library(${project_name}::${project_name} ALIAS ${project_name})
-target_include_directories(${project_name} INTERFACE
+target_include_directories(${project_name} PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
+target_link_libraries(${project_name} PUBLIC ${ext_deps})
 
 install(
   DIRECTORY include/
@@ -52,8 +59,13 @@ include(GNUInstallDirs)
 #Install headers
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-#Install and export the INTERFACE target
-install(TARGETS ${project_name} EXPORT ${project_name}Targets)
+#Install and export the library target
+install(TARGETS ${project_name} 
+    EXPORT ${project_name}Targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
 
 #Install the export file so that `find_package(${project_name})` works
 install(EXPORT ${project_name}Targets
@@ -81,7 +93,7 @@ if(${project_name_upper}_BUILD_EXAMPLES)
       foreach(lib_file IN LISTS internal_deps)
         target_sources(${exec_name} PRIVATE "${lib_file}")
       endforeach()
-    target_link_libraries(${exec_name} ${ext_deps})
+    target_link_libraries(${exec_name} ${project_name} ${ext_deps})
     install(TARGETS ${exec_name} DESTINATION bin)
     list(APPEND exec_names ${exec_name})
   endforeach()
@@ -117,7 +129,7 @@ if(${project_name_upper}_ENABLE_TESTS)
       foreach(lib_file IN LISTS internal_deps)
         target_sources(${test_name} PRIVATE "${lib_file}")
       endforeach()
-    target_link_libraries(${test_name} ${ext_deps} doctest_with_main)
+    target_link_libraries(${test_name} ${project_name} ${ext_deps} doctest_with_main)
     add_test(NAME ${test_name} COMMAND ${test_name})
   endforeach()
 endif()

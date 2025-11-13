@@ -11,7 +11,6 @@
 #include <blockit/ledger/chain.hpp>
 #include <blockit/ledger/transaction.hpp>
 #include <blockit/storage/sqlite_store.hpp>
-#include <blockit/storage/sqlite_store_impl.hpp>
 #include <iostream>
 #include <memory>
 #include <vector>

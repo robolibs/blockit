@@ -2,7 +2,6 @@
 #include <doctest/doctest.h>
 
 #include <blockit/storage/sqlite_store.hpp>
-#include <blockit/storage/sqlite_store_impl.hpp>
 #include <filesystem>
 #include <thread>
 

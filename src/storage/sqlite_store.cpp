@@ -1,6 +1,4 @@
-#pragma once
-
-#include "sqlite_store.hpp"
+#include <blockit/storage/sqlite_store.hpp>
 #include <chrono>
 #include <cstring>
 #include <lockey/lockey.hpp>
@@ -13,12 +11,12 @@ namespace blockit::storage {
     // Utility functions implementation
     // ===========================================
 
-    inline int64_t currentTimestamp() {
+    int64_t currentTimestamp() {
         return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
             .count();
     }
 
-    inline std::vector<uint8_t> computeSHA256(const std::vector<uint8_t> &data) {
+    std::vector<uint8_t> computeSHA256(const std::vector<uint8_t> &data) {
         lockey::Lockey crypto(lockey::Lockey::Algorithm::XChaCha20_Poly1305, lockey::Lockey::HashAlgorithm::SHA256);
         auto result = crypto.hash(data);
         if (!result.success) {
@@ -27,25 +25,25 @@ namespace blockit::storage {
         return result.data;
     }
 
-    inline std::string hashToHex(const std::vector<uint8_t> &hash) { return lockey::Lockey::to_hex(hash); }
+    std::string hashToHex(const std::vector<uint8_t> &hash) { return lockey::Lockey::to_hex(hash); }
 
-    inline std::vector<uint8_t> hexToHash(const std::string &hex) { return lockey::Lockey::from_hex(hex); }
+    std::vector<uint8_t> hexToHash(const std::string &hex) { return lockey::Lockey::from_hex(hex); }
 
     // ===========================================
     // SqliteStore implementation
     // ===========================================
 
-    inline SqliteStore::SqliteStore() : db_(nullptr), is_open_(false) {}
+    SqliteStore::SqliteStore() : db_(nullptr), is_open_(false) {}
 
-    inline SqliteStore::~SqliteStore() { close(); }
+    SqliteStore::~SqliteStore() { close(); }
 
-    inline SqliteStore::SqliteStore(SqliteStore &&other) noexcept
+    SqliteStore::SqliteStore(SqliteStore &&other) noexcept
         : db_(other.db_), db_path_(std::move(other.db_path_)), is_open_(other.is_open_) {
         other.db_ = nullptr;
         other.is_open_ = false;
     }
 
-    inline SqliteStore &SqliteStore::operator=(SqliteStore &&other) noexcept {
+    SqliteStore &SqliteStore::operator=(SqliteStore &&other) noexcept {
         if (this != &other) {
             close();
             db_ = other.db_;
@@ -57,7 +55,7 @@ namespace blockit::storage {
         return *this;
     }
 
-    inline bool SqliteStore::open(const std::string &path, const OpenOptions &opts) {
+    bool SqliteStore::open(const std::string &path, const OpenOptions &opts) {
         int rc = sqlite3_open(path.c_str(), &db_);
         if (rc != SQLITE_OK) {
             if (db_) {
@@ -74,7 +72,7 @@ namespace blockit::storage {
         return true;
     }
 
-    inline void SqliteStore::close() {
+    void SqliteStore::close() {
         if (db_) {
             sqlite3_close(db_);
             db_ = nullptr;
@@ -82,9 +80,9 @@ namespace blockit::storage {
         }
     }
 
-    inline bool SqliteStore::isOpen() const { return is_open_; }
+    bool SqliteStore::isOpen() const { return is_open_; }
 
-    inline void SqliteStore::applyPragmas(const OpenOptions &opts) {
+    void SqliteStore::applyPragmas(const OpenOptions &opts) {
         if (!db_)
             return;
 
@@ -117,7 +115,7 @@ namespace blockit::storage {
         sqlite3_exec(db_, sync_mode.c_str(), nullptr, nullptr, nullptr);
     }
 
-    inline bool SqliteStore::initializeCoreSchema() {
+    bool SqliteStore::initializeCoreSchema() {
         if (!db_ || !is_open_)
             return false;
 
@@ -142,13 +140,13 @@ namespace blockit::storage {
         return true;
     }
 
-    inline bool SqliteStore::createCoreSchemaV1() {
+    bool SqliteStore::createCoreSchemaV1() {
         return executeSql(BLOCKS_TABLE) && executeSql(TRANSACTIONS_TABLE) && executeSql(ANCHORS_TABLE) &&
                executeSql(IDX_BLOCKS_TIMESTAMP) && executeSql(IDX_BLOCKS_HASH) && executeSql(IDX_TX_BLOCK_HEIGHT) &&
                executeSql(IDX_TX_TIMESTAMP) && executeSql(IDX_ANCHORS_BLOCK) && executeSql(IDX_ANCHORS_TX);
     }
 
-    inline bool SqliteStore::registerExtension(const ISchemaExtension &extension) {
+    bool SqliteStore::registerExtension(const ISchemaExtension &extension) {
         if (!db_ || !is_open_)
             return false;
 
@@ -181,7 +179,7 @@ namespace blockit::storage {
         return true;
     }
 
-    inline bool SqliteStore::tableExists(const std::string &table_name) {
+    bool SqliteStore::tableExists(const std::string &table_name) {
         if (!db_)
             return false;
 
@@ -200,7 +198,7 @@ namespace blockit::storage {
         return exists;
     }
 
-    inline int32_t SqliteStore::getCurrentSchemaVersion() {
+    int32_t SqliteStore::getCurrentSchemaVersion() {
         if (!tableExists("schema_migrations"))
             return 0;
 
@@ -220,7 +218,7 @@ namespace blockit::storage {
         return version;
     }
 
-    inline bool SqliteStore::setSchemaVersion(int32_t version) {
+    bool SqliteStore::setSchemaVersion(int32_t version) {
         sqlite3_stmt *stmt;
         const char *sql = "INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)";
 
@@ -241,19 +239,19 @@ namespace blockit::storage {
     // Transaction Guard
     // ===========================================
 
-    inline SqliteStore::TxGuard::TxGuard(SqliteStore &store) : store_(store), active_(false), committed_(false) {
+    SqliteStore::TxGuard::TxGuard(SqliteStore &store) : store_(store), active_(false), committed_(false) {
         if (store_.db_) {
             active_ = (sqlite3_exec(store_.db_, "BEGIN TRANSACTION", nullptr, nullptr, nullptr) == SQLITE_OK);
         }
     }
 
-    inline SqliteStore::TxGuard::~TxGuard() {
+    SqliteStore::TxGuard::~TxGuard() {
         if (active_ && !committed_) {
             sqlite3_exec(store_.db_, "ROLLBACK", nullptr, nullptr, nullptr);
         }
     }
 
-    inline void SqliteStore::TxGuard::commit() {
+    void SqliteStore::TxGuard::commit() {
         if (active_ && !committed_) {
             sqlite3_exec(store_.db_, "COMMIT", nullptr, nullptr, nullptr);
             committed_ = true;
@@ -261,7 +259,7 @@ namespace blockit::storage {
         }
     }
 
-    inline void SqliteStore::TxGuard::rollback() {
+    void SqliteStore::TxGuard::rollback() {
         if (active_ && !committed_) {
             sqlite3_exec(store_.db_, "ROLLBACK", nullptr, nullptr, nullptr);
             committed_ = true;
@@ -269,16 +267,14 @@ namespace blockit::storage {
         }
     }
 
-    inline std::unique_ptr<SqliteStore::TxGuard> SqliteStore::beginTransaction() {
-        return std::make_unique<TxGuard>(*this);
-    }
+    std::unique_ptr<SqliteStore::TxGuard> SqliteStore::beginTransaction() { return std::make_unique<TxGuard>(*this); }
 
     // ===========================================
     // Core Ledger Operations
     // ===========================================
 
-    inline bool SqliteStore::storeBlock(int64_t index, const std::string &hash, const std::string &previous_hash,
-                                        const std::string &merkle_root, int64_t timestamp, int64_t nonce) {
+    bool SqliteStore::storeBlock(int64_t index, const std::string &hash, const std::string &previous_hash,
+                                 const std::string &merkle_root, int64_t timestamp, int64_t nonce) {
         if (!db_ || !is_open_)
             return false;
 
@@ -304,8 +300,8 @@ namespace blockit::storage {
         return success;
     }
 
-    inline bool SqliteStore::storeTransaction(const std::string &tx_id, int64_t block_height, int64_t timestamp,
-                                              int16_t priority, const std::vector<uint8_t> &payload) {
+    bool SqliteStore::storeTransaction(const std::string &tx_id, int64_t block_height, int64_t timestamp,
+                                       int16_t priority, const std::vector<uint8_t> &payload) {
         if (!db_ || !is_open_)
             return false;
 
@@ -330,8 +326,8 @@ namespace blockit::storage {
         return success;
     }
 
-    inline bool SqliteStore::createAnchor(const std::string &content_id, const std::vector<uint8_t> &content_hash,
-                                          const TxRef &tx_ref) {
+    bool SqliteStore::createAnchor(const std::string &content_id, const std::vector<uint8_t> &content_hash,
+                                   const TxRef &tx_ref) {
         if (!db_ || !is_open_)
             return false;
 
@@ -357,7 +353,7 @@ namespace blockit::storage {
         return success;
     }
 
-    inline std::optional<Anchor> SqliteStore::getAnchor(const std::string &content_id) {
+    std::optional<Anchor> SqliteStore::getAnchor(const std::string &content_id) {
         if (!db_ || !is_open_)
             return std::nullopt;
 
@@ -396,7 +392,7 @@ namespace blockit::storage {
         return std::nullopt;
     }
 
-    inline std::vector<Anchor> SqliteStore::getAnchorsByBlock(int64_t block_height) {
+    std::vector<Anchor> SqliteStore::getAnchorsByBlock(int64_t block_height) {
         std::vector<Anchor> anchors;
         if (!db_ || !is_open_)
             return anchors;
@@ -435,7 +431,7 @@ namespace blockit::storage {
         return anchors;
     }
 
-    inline std::vector<Anchor> SqliteStore::getAnchorsInRange(int64_t min_height, int64_t max_height) {
+    std::vector<Anchor> SqliteStore::getAnchorsInRange(int64_t min_height, int64_t max_height) {
         std::vector<Anchor> anchors;
         if (!db_ || !is_open_)
             return anchors;
@@ -475,7 +471,7 @@ namespace blockit::storage {
         return anchors;
     }
 
-    inline std::vector<std::string> SqliteStore::queryTransactions(const LedgerQuery &query) {
+    std::vector<std::string> SqliteStore::queryTransactions(const LedgerQuery &query) {
         std::vector<std::string> tx_ids;
         if (!db_ || !is_open_)
             return tx_ids;
@@ -514,7 +510,7 @@ namespace blockit::storage {
         return tx_ids;
     }
 
-    inline std::optional<std::string> SqliteStore::getBlockByHeight(int64_t height) {
+    std::optional<std::string> SqliteStore::getBlockByHeight(int64_t height) {
         if (!db_ || !is_open_)
             return std::nullopt;
 
@@ -548,7 +544,7 @@ namespace blockit::storage {
         return std::nullopt;
     }
 
-    inline std::optional<std::string> SqliteStore::getBlockByHash(const std::string &hash) {
+    std::optional<std::string> SqliteStore::getBlockByHash(const std::string &hash) {
         if (!db_ || !is_open_)
             return std::nullopt;
 
@@ -582,7 +578,7 @@ namespace blockit::storage {
         return std::nullopt;
     }
 
-    inline std::optional<std::vector<uint8_t>> SqliteStore::getTransaction(const std::string &tx_id) {
+    std::optional<std::vector<uint8_t>> SqliteStore::getTransaction(const std::string &tx_id) {
         if (!db_ || !is_open_)
             return std::nullopt;
 
@@ -612,7 +608,7 @@ namespace blockit::storage {
     // Verification
     // ===========================================
 
-    inline bool SqliteStore::verifyAnchor(const std::string &content_id, const std::vector<uint8_t> &current_content) {
+    bool SqliteStore::verifyAnchor(const std::string &content_id, const std::vector<uint8_t> &current_content) {
         auto anchor = getAnchor(content_id);
         if (!anchor)
             return false;
@@ -625,7 +621,7 @@ namespace blockit::storage {
         }
     }
 
-    inline bool SqliteStore::verifyChainContinuity() {
+    bool SqliteStore::verifyChainContinuity() {
         if (!db_ || !is_open_)
             return false;
 
@@ -655,7 +651,7 @@ namespace blockit::storage {
     // Statistics
     // ===========================================
 
-    inline int64_t SqliteStore::getBlockCount() {
+    int64_t SqliteStore::getBlockCount() {
         if (!db_ || !is_open_)
             return 0;
 
@@ -675,7 +671,7 @@ namespace blockit::storage {
         return count;
     }
 
-    inline int64_t SqliteStore::getTransactionCount() {
+    int64_t SqliteStore::getTransactionCount() {
         if (!db_ || !is_open_)
             return 0;
 
@@ -695,7 +691,7 @@ namespace blockit::storage {
         return count;
     }
 
-    inline int64_t SqliteStore::getAnchorCount() {
+    int64_t SqliteStore::getAnchorCount() {
         if (!db_ || !is_open_)
             return 0;
 
@@ -715,7 +711,7 @@ namespace blockit::storage {
         return count;
     }
 
-    inline int64_t SqliteStore::getLatestBlockHeight() {
+    int64_t SqliteStore::getLatestBlockHeight() {
         if (!db_ || !is_open_)
             return -1;
 
@@ -740,7 +736,7 @@ namespace blockit::storage {
         return -1;
     }
 
-    inline bool SqliteStore::quickCheck() {
+    bool SqliteStore::quickCheck() {
         if (!db_ || !is_open_)
             return false;
 
@@ -765,7 +761,7 @@ namespace blockit::storage {
     // Raw SQL access
     // ===========================================
 
-    inline bool SqliteStore::executeSql(const std::string &sql) {
+    bool SqliteStore::executeSql(const std::string &sql) {
         if (!db_ || !is_open_)
             return false;
 
@@ -782,7 +778,7 @@ namespace blockit::storage {
         return true;
     }
 
-    inline int64_t SqliteStore::executeUpdate(const std::string &sql, const std::vector<std::string> &params) {
+    int64_t SqliteStore::executeUpdate(const std::string &sql, const std::vector<std::string> &params) {
         if (!db_ || !is_open_)
             return -1;
 
@@ -801,8 +797,8 @@ namespace blockit::storage {
         return (rc == SQLITE_DONE) ? sqlite3_changes(db_) : -1;
     }
 
-    inline bool SqliteStore::executeQuery(const std::string &sql,
-                                          std::function<void(const std::vector<std::string> &row)> callback) {
+    bool SqliteStore::executeQuery(const std::string &sql,
+                                   std::function<void(const std::vector<std::string> &row)> callback) {
         if (!db_ || !is_open_ || !callback)
             return false;
 
