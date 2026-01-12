@@ -2,3 +2,5 @@
 .quickfix
 build
 compile_commands.json
+PLAN.md
+devbox.lock

@@ -1,5 +1,5 @@
 #include <doctest/doctest.h>
-#include "blokit/blokit.hpp"
+#include "blockit.hpp"
 #include <memory>
 
 // These tests are designed to FAIL initially and guide development of networking features
