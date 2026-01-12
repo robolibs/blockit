@@ -1,4 +1,4 @@
-#include "blockit.hpp"
+#include "blockit/blockit.hpp"
 #include <chrono>
 #include <doctest/doctest.h>
 #include <memory>

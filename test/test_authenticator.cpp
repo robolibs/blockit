@@ -1,4 +1,4 @@
-#include "blockit.hpp"
+#include "blockit/blockit.hpp"
 #include <doctest/doctest.h>
 #include <unordered_map>
 

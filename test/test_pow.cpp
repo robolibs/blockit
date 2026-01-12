@@ -1,5 +1,5 @@
 #include <doctest/doctest.h>
-#include "blockit.hpp"
+#include "blockit/blockit.hpp"
 #include <memory>
 
 // These tests are designed to FAIL initially and guide our development of missing features

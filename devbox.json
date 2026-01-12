@@ -9,8 +9,6 @@
     "rerun@latest",
     "zig@latest",
     "xmake@latest",
-    "sqlite@latest",
-    "sqlite.dev",
     "libsodium@latest",
     "libsodium.dev",
     "gcc@13.3.0"

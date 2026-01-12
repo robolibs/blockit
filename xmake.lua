@@ -2,7 +2,7 @@
 -- NOTE: Due to xmake description domain limitations, PROJECT_NAME must be hardcoded
 --       and kept in sync with the NAME file. The VERSION is read dynamically.
 local PROJECT_NAME = "blockit"
-local PROJECT_VERSION = "0.0.2"
+local PROJECT_VERSION = "0.0.3"
 
 -- Dependencies formats:
 --   Git:    {"name", "https://github.com/org/repo.git", "tag"}
@@ -12,7 +12,6 @@ local LIB_DEPS = {
     {"echo", "https://github.com/bresilla/echo.git", "0.0.23"},
     {"datapod", "https://github.com/robolibs/datapod.git", "0.0.34"},
     {"keylock", "https://github.com/robolibs/keylock.git", "0.0.4"},
-    {system = "sqlite3"},
     {system = "libsodium"},
 }
 local EXAMPLE_DEPS = {
