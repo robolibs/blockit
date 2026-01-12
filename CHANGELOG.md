@@ -53,7 +53,7 @@
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
 
-- Replace OpenSSL and ROS2 with Lockey
+- Replace OpenSSL and ROS2 with keulock
 
 ### Build
 

@@ -156,7 +156,7 @@ Fast Queries + Cryptographic Verification
 ## Dependencies
 
 - SQLite3 (system, pure C API)
-- Lockey (cryptography)
+- Keylock (cryptography)
 - C++20
 - CMake 3.15+
 
