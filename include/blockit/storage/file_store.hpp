@@ -5,6 +5,8 @@
 #include <fstream>
 #include <keylock/keylock.hpp>
 #include <map>
+#include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 
 namespace blockit::storage {
@@ -191,15 +193,26 @@ namespace blockit::storage {
         FileStore(const FileStore &) = delete;
         FileStore &operator=(const FileStore &) = delete;
 
-        inline FileStore(FileStore &&other) noexcept
-            : base_path_(std::move(other.base_path_)), is_open_(other.is_open_), sync_mode_(other.sync_mode_),
-              block_index_(std::move(other.block_index_)), tx_index_(std::move(other.tx_index_)),
-              anchor_index_(std::move(other.anchor_index_)), hash_to_height_(std::move(other.hash_to_height_)) {
+        inline FileStore(FileStore &&other) noexcept {
+            std::unique_lock lock(other.mutex_);
+            base_path_ = std::move(other.base_path_);
+            is_open_ = other.is_open_;
+            sync_mode_ = other.sync_mode_;
+            block_index_ = std::move(other.block_index_);
+            tx_index_ = std::move(other.tx_index_);
+            anchor_index_ = std::move(other.anchor_index_);
+            hash_to_height_ = std::move(other.hash_to_height_);
+            pending_blocks_ = std::move(other.pending_blocks_);
+            pending_transactions_ = std::move(other.pending_transactions_);
+            pending_anchors_ = std::move(other.pending_anchors_);
             other.is_open_ = false;
         }
 
         inline FileStore &operator=(FileStore &&other) noexcept {
             if (this != &other) {
+                std::unique_lock lock1(mutex_, std::defer_lock);
+                std::unique_lock lock2(other.mutex_, std::defer_lock);
+                std::lock(lock1, lock2);
                 close();
                 base_path_ = std::move(other.base_path_);
                 is_open_ = other.is_open_;
@@ -208,6 +221,9 @@ namespace blockit::storage {
                 tx_index_ = std::move(other.tx_index_);
                 anchor_index_ = std::move(other.anchor_index_);
                 hash_to_height_ = std::move(other.hash_to_height_);
+                pending_blocks_ = std::move(other.pending_blocks_);
+                pending_transactions_ = std::move(other.pending_transactions_);
+                pending_anchors_ = std::move(other.pending_anchors_);
                 other.is_open_ = false;
             }
             return *this;
@@ -215,12 +231,13 @@ namespace blockit::storage {
 
         /// Open or create storage at given path (directory)
         inline Result<void, Error> open(const String &path, const OpenOptions &opts = OpenOptions{}) {
+            std::unique_lock lock(mutex_);
             try {
                 base_path_ = std::string(path.c_str());
                 sync_mode_ = opts.sync_mode;
 
                 std::filesystem::create_directories(base_path_);
-                loadIndexes();
+                loadIndexesUnsafe();
 
                 is_open_ = true;
                 return Result<void, Error>::ok();
@@ -232,21 +249,27 @@ namespace blockit::storage {
 
         /// Close storage
         inline void close() {
+            std::unique_lock lock(mutex_);
             if (is_open_) {
-                flushIndexes();
+                flushIndexesUnsafe();
                 is_open_ = false;
             }
         }
 
         /// Check if storage is open
-        inline bool isOpen() const { return is_open_; }
+        inline bool isOpen() const {
+            std::shared_lock lock(mutex_);
+            return is_open_;
+        }
 
         /// Initialize core schema (creates necessary files)
         inline Result<void, Error> initializeCoreSchema() {
+            std::unique_lock lock(mutex_);
             if (!is_open_)
                 return Result<void, Error>::err(Error::invalid_argument("Store not open"));
 
             try {
+                std::lock_guard<std::mutex> file_lock(file_mutex_);
                 auto blocks_path = base_path_ / "blocks.dat";
                 auto tx_path = base_path_ / "transactions.dat";
                 auto anchors_path = base_path_ / "anchors.dat";
@@ -269,6 +292,7 @@ namespace blockit::storage {
 
         /// Register schema extension (no-op for file store)
         inline Result<void, Error> registerExtension(const ISchemaExtension &) {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return Result<void, Error>::err(Error::invalid_argument("Store not open"));
             return Result<void, Error>::ok();
@@ -281,6 +305,7 @@ namespace blockit::storage {
         class TxGuard {
           public:
             inline explicit TxGuard(FileStore &store) : store_(store), committed_(false) {
+                std::unique_lock lock(store_.mutex_);
                 store_.pending_blocks_.clear();
                 store_.pending_transactions_.clear();
                 store_.pending_anchors_.clear();
@@ -288,6 +313,7 @@ namespace blockit::storage {
 
             inline ~TxGuard() {
                 if (!committed_) {
+                    std::unique_lock lock(store_.mutex_);
                     store_.pending_blocks_.clear();
                     store_.pending_transactions_.clear();
                     store_.pending_anchors_.clear();
@@ -306,6 +332,7 @@ namespace blockit::storage {
 
             inline void rollback() {
                 if (!committed_) {
+                    std::unique_lock lock(store_.mutex_);
                     store_.pending_blocks_.clear();
                     store_.pending_transactions_.clear();
                     store_.pending_anchors_.clear();
@@ -327,6 +354,7 @@ namespace blockit::storage {
         /// Store a block in the ledger
         inline Result<void, Error> storeBlock(i64 index, const String &hash, const String &previous_hash,
                                               const String &merkle_root, i64 timestamp, i64 nonce) {
+            std::unique_lock lock(mutex_);
             if (!is_open_)
                 return Result<void, Error>::err(Error::invalid_argument("Store not open"));
 
@@ -346,6 +374,7 @@ namespace blockit::storage {
         /// Store a transaction in the ledger
         inline Result<void, Error> storeTransaction(const String &tx_id, i64 block_height, i64 timestamp, i16 priority,
                                                     const Vector<u8> &payload) {
+            std::unique_lock lock(mutex_);
             if (!is_open_)
                 return Result<void, Error>::err(Error::invalid_argument("Store not open"));
 
@@ -364,6 +393,7 @@ namespace blockit::storage {
         /// Create an anchor linking external content to on-chain transaction
         inline Result<void, Error> createAnchor(const String &content_id, const Vector<u8> &content_hash,
                                                 const TxRef &tx_ref) {
+            std::unique_lock lock(mutex_);
             if (!is_open_)
                 return Result<void, Error>::err(Error::invalid_argument("Store not open"));
 
@@ -381,6 +411,7 @@ namespace blockit::storage {
 
         /// Get anchor by content ID
         inline Optional<Anchor> getAnchor(const String &content_id) {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return Optional<Anchor>();
 
@@ -397,11 +428,12 @@ namespace blockit::storage {
             if (it == anchor_index_.end())
                 return Optional<Anchor>();
 
-            return readAnchorAt(it->second);
+            return readAnchorAtUnsafe(it->second);
         }
 
         /// Get all anchors for a specific block height
         inline Vector<Anchor> getAnchorsByBlock(i64 block_height) {
+            std::shared_lock lock(mutex_);
             Vector<Anchor> anchors;
             if (!is_open_)
                 return anchors;
@@ -414,7 +446,7 @@ namespace blockit::storage {
             }
 
             // Read all anchors and filter
-            auto all_anchors = readAllAnchors();
+            auto all_anchors = readAllAnchorsUnsafe();
             for (auto &anchor : all_anchors) {
                 if (anchor.block_height == block_height) {
                     anchors.push_back(std::move(anchor));
@@ -426,6 +458,7 @@ namespace blockit::storage {
 
         /// Get all anchors within a height range
         inline Vector<Anchor> getAnchorsInRange(i64 min_height, i64 max_height) {
+            std::shared_lock lock(mutex_);
             Vector<Anchor> anchors;
             if (!is_open_)
                 return anchors;
@@ -438,7 +471,7 @@ namespace blockit::storage {
             }
 
             // Read all anchors and filter
-            auto all_anchors = readAllAnchors();
+            auto all_anchors = readAllAnchorsUnsafe();
             for (auto &anchor : all_anchors) {
                 if (anchor.block_height >= min_height && anchor.block_height <= max_height) {
                     anchors.push_back(std::move(anchor));
@@ -450,11 +483,12 @@ namespace blockit::storage {
 
         /// Query transactions with filters
         inline Vector<String> queryTransactions(const LedgerQuery &query) {
+            std::shared_lock lock(mutex_);
             Vector<String> tx_ids;
             if (!is_open_)
                 return tx_ids;
 
-            auto all_tx = readAllTransactions();
+            auto all_tx = readAllTransactionsUnsafe();
             Vector<TransactionRecord> filtered;
 
             auto matchesQuery = [&query](const TransactionRecord &tx) {
@@ -500,6 +534,7 @@ namespace blockit::storage {
 
         /// Get block by height
         inline Optional<String> getBlockByHeight(i64 height) {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return Optional<String>();
 
@@ -515,7 +550,7 @@ namespace blockit::storage {
             if (it == block_index_.end())
                 return Optional<String>();
 
-            auto record = readBlockAt(it->second);
+            auto record = readBlockAtUnsafe(it->second);
             if (!record.has_value())
                 return Optional<String>();
 
@@ -524,6 +559,7 @@ namespace blockit::storage {
 
         /// Get block by hash
         inline Optional<String> getBlockByHash(const String &hash) {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return Optional<String>();
 
@@ -540,11 +576,21 @@ namespace blockit::storage {
             if (it == hash_to_height_.end())
                 return Optional<String>();
 
-            return getBlockByHeight(it->second);
+            // Use unsafe version since we already hold lock
+            auto block_it = block_index_.find(it->second);
+            if (block_it == block_index_.end())
+                return Optional<String>();
+
+            auto record = readBlockAtUnsafe(block_it->second);
+            if (!record.has_value())
+                return Optional<String>();
+
+            return Optional<String>(record->toJson());
         }
 
         /// Get transaction by ID
         inline Optional<Vector<u8>> getTransaction(const String &tx_id) {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return Optional<Vector<u8>>();
 
@@ -561,7 +607,7 @@ namespace blockit::storage {
             if (it == tx_index_.end())
                 return Optional<Vector<u8>>();
 
-            auto record = readTransactionAt(it->second);
+            auto record = readTransactionAtUnsafe(it->second);
             if (!record.has_value())
                 return Optional<Vector<u8>>();
 
@@ -596,6 +642,7 @@ namespace blockit::storage {
 
         /// Check if chain is continuous (no gaps in block heights)
         inline Result<bool, Error> verifyChainContinuity() {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return Result<bool, Error>::err(Error::invalid_argument("Store not open"));
 
@@ -625,24 +672,28 @@ namespace blockit::storage {
         // ===========================================
 
         inline i64 getBlockCount() {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return 0;
             return static_cast<i64>(block_index_.size() + pending_blocks_.size());
         }
 
         inline i64 getTransactionCount() {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return 0;
             return static_cast<i64>(tx_index_.size() + pending_transactions_.size());
         }
 
         inline i64 getAnchorCount() {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return 0;
             return static_cast<i64>(anchor_index_.size() + pending_anchors_.size());
         }
 
         inline i64 getLatestBlockHeight() {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return -1;
 
@@ -657,6 +708,7 @@ namespace blockit::storage {
         }
 
         inline Result<bool, Error> quickCheck() {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return Result<bool, Error>::err(Error::invalid_argument("Store not open"));
 
@@ -688,11 +740,12 @@ namespace blockit::storage {
 
       private:
         // ===========================================
-        // File I/O with datapod serialization
+        // File I/O with datapod serialization (unsafe - caller must hold lock)
         // ===========================================
 
         template <typename T>
-        inline void appendRecord(const std::filesystem::path &file, const T &record, u64 &offset) {
+        inline void appendRecordUnsafe(const std::filesystem::path &file, const T &record, u64 &offset) {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
             std::ofstream out(file, std::ios::binary | std::ios::app);
             if (!out)
                 throw std::runtime_error("Failed to open file for writing");
@@ -712,7 +765,8 @@ namespace blockit::storage {
             }
         }
 
-        template <typename T> inline Optional<T> readRecordAt(const std::filesystem::path &file, u64 offset) {
+        template <typename T> inline Optional<T> readRecordAtUnsafe(const std::filesystem::path &file, u64 offset) {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
             std::ifstream in(file, std::ios::binary);
             if (!in)
                 return Optional<T>();
@@ -732,22 +786,23 @@ namespace blockit::storage {
             return Optional<T>(datapod::deserialize<Mode::NONE, T>(data));
         }
 
-        inline Optional<BlockRecord> readBlockAt(u64 offset) {
-            return readRecordAt<BlockRecord>(base_path_ / "blocks.dat", offset);
+        inline Optional<BlockRecord> readBlockAtUnsafe(u64 offset) {
+            return readRecordAtUnsafe<BlockRecord>(base_path_ / "blocks.dat", offset);
         }
 
-        inline Optional<TransactionRecord> readTransactionAt(u64 offset) {
-            return readRecordAt<TransactionRecord>(base_path_ / "transactions.dat", offset);
+        inline Optional<TransactionRecord> readTransactionAtUnsafe(u64 offset) {
+            return readRecordAtUnsafe<TransactionRecord>(base_path_ / "transactions.dat", offset);
         }
 
-        inline Optional<Anchor> readAnchorAt(u64 offset) {
-            auto record = readRecordAt<AnchorRecord>(base_path_ / "anchors.dat", offset);
+        inline Optional<Anchor> readAnchorAtUnsafe(u64 offset) {
+            auto record = readRecordAtUnsafe<AnchorRecord>(base_path_ / "anchors.dat", offset);
             if (!record.has_value())
                 return Optional<Anchor>();
             return Optional<Anchor>(record->toAnchor());
         }
 
-        template <typename T> inline Vector<T> readAllRecords(const std::filesystem::path &file) {
+        template <typename T> inline Vector<T> readAllRecordsUnsafe(const std::filesystem::path &file) {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
             Vector<T> records;
             std::ifstream in(file, std::ios::binary);
             if (!in)
@@ -770,12 +825,12 @@ namespace blockit::storage {
             return records;
         }
 
-        inline Vector<TransactionRecord> readAllTransactions() {
-            return readAllRecords<TransactionRecord>(base_path_ / "transactions.dat");
+        inline Vector<TransactionRecord> readAllTransactionsUnsafe() {
+            return readAllRecordsUnsafe<TransactionRecord>(base_path_ / "transactions.dat");
         }
 
-        inline Vector<Anchor> readAllAnchors() {
-            auto records = readAllRecords<AnchorRecord>(base_path_ / "anchors.dat");
+        inline Vector<Anchor> readAllAnchorsUnsafe() {
+            auto records = readAllRecordsUnsafe<AnchorRecord>(base_path_ / "anchors.dat");
             Vector<Anchor> anchors;
             for (const auto &r : records) {
                 anchors.push_back(r.toAnchor());
@@ -784,21 +839,22 @@ namespace blockit::storage {
         }
 
         // ===========================================
-        // Index management
+        // Index management (unsafe - caller must hold lock)
         // ===========================================
 
-        inline void loadIndexes() {
+        inline void loadIndexesUnsafe() {
             block_index_.clear();
             tx_index_.clear();
             anchor_index_.clear();
             hash_to_height_.clear();
 
-            loadBlockIndex();
-            loadTransactionIndex();
-            loadAnchorIndex();
+            loadBlockIndexUnsafe();
+            loadTransactionIndexUnsafe();
+            loadAnchorIndexUnsafe();
         }
 
-        inline void loadBlockIndex() {
+        inline void loadBlockIndexUnsafe() {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
             auto file = base_path_ / "blocks.dat";
             std::ifstream in(file, std::ios::binary);
             if (!in)
@@ -823,7 +879,8 @@ namespace blockit::storage {
             }
         }
 
-        inline void loadTransactionIndex() {
+        inline void loadTransactionIndexUnsafe() {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
             auto file = base_path_ / "transactions.dat";
             std::ifstream in(file, std::ios::binary);
             if (!in)
@@ -847,7 +904,8 @@ namespace blockit::storage {
             }
         }
 
-        inline void loadAnchorIndex() {
+        inline void loadAnchorIndexUnsafe() {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
             auto file = base_path_ / "anchors.dat";
             std::ifstream in(file, std::ios::binary);
             if (!in)
@@ -872,10 +930,11 @@ namespace blockit::storage {
         }
 
         inline void flushPending() {
+            std::unique_lock lock(mutex_);
             // Flush blocks
             for (const auto &record : pending_blocks_) {
                 u64 offset;
-                appendRecord(base_path_ / "blocks.dat", record, offset);
+                appendRecordUnsafe(base_path_ / "blocks.dat", record, offset);
                 block_index_[record.height] = offset;
                 hash_to_height_[std::string(record.hash.c_str())] = record.height;
             }
@@ -884,7 +943,7 @@ namespace blockit::storage {
             // Flush transactions
             for (const auto &record : pending_transactions_) {
                 u64 offset;
-                appendRecord(base_path_ / "transactions.dat", record, offset);
+                appendRecordUnsafe(base_path_ / "transactions.dat", record, offset);
                 tx_index_[std::string(record.tx_id.c_str())] = offset;
             }
             pending_transactions_.clear();
@@ -892,13 +951,13 @@ namespace blockit::storage {
             // Flush anchors
             for (const auto &record : pending_anchors_) {
                 u64 offset;
-                appendRecord(base_path_ / "anchors.dat", record, offset);
+                appendRecordUnsafe(base_path_ / "anchors.dat", record, offset);
                 anchor_index_[std::string(record.content_id.c_str())] = offset;
             }
             pending_anchors_.clear();
         }
 
-        inline void flushIndexes() {
+        inline void flushIndexesUnsafe() {
             // Indexes are maintained in memory and rebuilt on load
         }
 
@@ -909,6 +968,10 @@ namespace blockit::storage {
         std::filesystem::path base_path_;
         bool is_open_;
         OpenOptions::Synchronous sync_mode_;
+
+        // Thread safety
+        mutable std::shared_mutex mutex_;
+        mutable std::mutex file_mutex_;
 
         // In-memory indexes
         std::map<i64, u64> block_index_;

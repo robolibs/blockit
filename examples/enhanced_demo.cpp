@@ -141,7 +141,8 @@ void demonstrateLedgerTracking() {
     // Demonstrate Merkle tree verification
     std::cout << "\nMerkle Tree Verification:" << std::endl;
     for (size_t i = 0; i < entries.size(); i++) {
-        bool verified = ledgerChain.blocks_.back().verifyTransaction(i);
+        auto verify_result = ledgerChain.blocks_.back().verifyTransaction(i);
+        bool verified = verify_result.is_ok() && verify_result.value();
         std::cout << "Transaction " << i << " (" << entries[i].uuid_ << "): " << (verified ? "VERIFIED" : "FAILED")
                   << std::endl;
     }
@@ -199,14 +200,22 @@ void demonstrateMerkleTreeEfficiency() {
 
     chain::MerkleTree large_tree(large_transaction_set);
 
-    std::cout << "Merkle root: " << large_tree.getRoot().substr(0, 32) << "..." << std::endl;
+    auto root_result = large_tree.getRoot();
+    std::string root = root_result.is_ok() ? root_result.value() : "ERROR";
+    std::cout << "Merkle root: " << root.substr(0, 32) << "..." << std::endl;
     std::cout << "Total transactions: " << large_tree.getTransactionCount() << std::endl;
 
     // Verify a few transactions
     std::cout << "\nVerifying random transactions:" << std::endl;
     for (int i : {0, 100, 500, 999}) {
-        auto proof = large_tree.getProof(i);
-        bool verified = large_tree.verifyProof(large_transaction_set[i], i, proof);
+        auto proof_result = large_tree.getProof(i);
+        if (!proof_result.is_ok()) {
+            std::cout << "Transaction " << i << ": FAILED (could not get proof)" << std::endl;
+            continue;
+        }
+        auto proof = proof_result.value();
+        auto verify_result = large_tree.verifyProof(large_transaction_set[i], i, proof);
+        bool verified = verify_result.is_ok() && verify_result.value();
         std::cout << "Transaction " << i << ": " << (verified ? "VERIFIED" : "FAILED")
                   << " (proof size: " << proof.size() << " hashes)" << std::endl;
     }

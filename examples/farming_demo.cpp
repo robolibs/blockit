@@ -190,7 +190,8 @@ void demonstrateSensorNetworkLedger() {
     // Demonstrate Merkle tree verification
     std::cout << "\nMerkle Tree Verification of Sensor Data:" << std::endl;
     for (size_t i = 0; i < readings.size(); i++) {
-        bool verified = sensorChain.blocks_.back().verifyTransaction(i);
+        auto verify_result = sensorChain.blocks_.back().verifyTransaction(i);
+        bool verified = verify_result.is_ok() && verify_result.value();
         std::cout << "Sensor Reading " << i << " (" << readings[i].uuid_ << "): " << (verified ? "VERIFIED" : "FAILED")
                   << std::endl;
     }

@@ -30,7 +30,7 @@ TEST_SUITE("Block Tests") {
         chain::Block<BlockTestData> block(transactions);
 
         CHECK(block.index_ == 0); // Genesis block
-        CHECK(block.previous_hash_ == "GENESIS");
+        CHECK(std::string(block.previous_hash_.c_str()) == "GENESIS");
         CHECK(block.transactions_.size() == 2);
         CHECK_FALSE(block.hash_.empty());
         CHECK_FALSE(block.merkle_root_.empty());
@@ -45,8 +45,10 @@ TEST_SUITE("Block Tests") {
 
         chain::Block<BlockTestData> block({tx});
 
-        std::string originalHash = block.hash_;
-        std::string calculatedHash = block.calculateHash();
+        std::string originalHash(block.hash_.c_str());
+        auto hash_result = block.calculateHash();
+        REQUIRE(hash_result.is_ok());
+        std::string calculatedHash = hash_result.value();
 
         CHECK(originalHash == calculatedHash);
         CHECK_FALSE(originalHash.empty());
@@ -60,12 +62,16 @@ TEST_SUITE("Block Tests") {
 
         chain::Block<BlockTestData> block({tx});
 
-        CHECK(block.isValid());
+        auto valid_result = block.isValid();
+        CHECK(valid_result.is_ok());
+        CHECK(valid_result.value());
 
         // Test with invalid conditions
         chain::Block<BlockTestData> invalidBlock;
         invalidBlock.index_ = -1; // Invalid index
-        CHECK_FALSE(invalidBlock.isValid());
+        auto invalid_result = invalidBlock.isValid();
+        bool is_valid = invalid_result.is_ok() && invalid_result.value();
+        CHECK_FALSE(is_valid);
     }
 
     TEST_CASE("Merkle tree integration in blocks") {
@@ -87,8 +93,9 @@ TEST_SUITE("Block Tests") {
 
         // Verify transactions using Merkle tree
         for (size_t i = 0; i < transactions.size(); i++) {
-            bool verified = block.verifyTransaction(i);
-            CHECK(verified);
+            auto verify_result = block.verifyTransaction(i);
+            CHECK(verify_result.is_ok());
+            CHECK(verify_result.value());
         }
     }
 
@@ -132,7 +139,7 @@ TEST_SUITE("Block Tests") {
         chain::Block<BlockTestData> block1({tx1});
         chain::Block<BlockTestData> block2({tx2});
 
-        CHECK(block1.hash_ != block2.hash_);
-        CHECK(block1.merkle_root_ != block2.merkle_root_);
+        CHECK(std::string(block1.hash_.c_str()) != std::string(block2.hash_.c_str()));
+        CHECK(std::string(block1.merkle_root_.c_str()) != std::string(block2.merkle_root_.c_str()));
     }
 }

@@ -5,6 +5,8 @@
 #include <blockit/ledger/transaction.hpp>
 #include <blockit/storage/file_store.hpp>
 #include <datapod/datapod.hpp>
+#include <mutex>
+#include <shared_mutex>
 
 namespace blockit {
 
@@ -24,8 +26,29 @@ namespace blockit {
         // Non-copyable, movable
         Blockit(const Blockit &) = delete;
         Blockit &operator=(const Blockit &) = delete;
-        Blockit(Blockit &&) = default;
-        Blockit &operator=(Blockit &&) = default;
+
+        Blockit(Blockit &&other) noexcept {
+            std::unique_lock lock(other.mutex_);
+            chain_ = std::move(other.chain_);
+            store_ = std::move(other.store_);
+            initialized_ = other.initialized_;
+            pending_anchors_ = std::move(other.pending_anchors_);
+            other.initialized_ = false;
+        }
+
+        Blockit &operator=(Blockit &&other) noexcept {
+            if (this != &other) {
+                std::unique_lock lock1(mutex_, std::defer_lock);
+                std::unique_lock lock2(other.mutex_, std::defer_lock);
+                std::lock(lock1, lock2);
+                chain_ = std::move(other.chain_);
+                store_ = std::move(other.store_);
+                initialized_ = other.initialized_;
+                pending_anchors_ = std::move(other.pending_anchors_);
+                other.initialized_ = false;
+            }
+            return *this;
+        }
 
         /// Initialize the store with blockchain and storage
         /// @param db_path Path to storage directory
@@ -104,6 +127,9 @@ namespace blockit {
         storage::FileStore store_;
         bool initialized_ = false;
 
+        // Thread safety
+        mutable std::shared_mutex mutex_;
+
         // Pending transactions waiting to be anchored (tx_id -> {content_id, content_hash})
         std::map<std::string, std::pair<String, Vector<u8>>> pending_anchors_;
     };
@@ -117,6 +143,8 @@ namespace blockit {
                                                const String &genesis_tx_id, const T &genesis_data,
                                                std::shared_ptr<ledger::Crypto> crypto,
                                                const storage::OpenOptions &opts) {
+        std::unique_lock lock(mutex_);
+
         // Open storage
         auto open_result = store_.open(db_path, opts);
         if (!open_result.is_ok()) {
@@ -152,6 +180,7 @@ namespace blockit {
     }
 
     template <typename T> Result<void, Error> Blockit<T>::registerSchema(const storage::ISchemaExtension &extension) {
+        std::shared_lock lock(mutex_);
         if (!initialized_)
             return Result<void, Error>::err(Error::invalid_argument("Store not initialized"));
         return store_.registerExtension(extension);
@@ -160,6 +189,7 @@ namespace blockit {
     template <typename T>
     Result<void, Error> Blockit<T>::createTransaction(const String &tx_id, const T &data, const String &content_id,
                                                       const Vector<u8> &content_bytes, i16 priority) {
+        std::unique_lock lock(mutex_);
         if (!initialized_)
             return Result<void, Error>::err(Error::invalid_argument("Store not initialized"));
 
@@ -172,11 +202,15 @@ namespace blockit {
         // Store the pending anchor mapping
         pending_anchors_[std::string(tx_id.c_str())] = {content_id, content_hash};
 
+        (void)data;     // Data is used when creating the actual transaction in addBlock
+        (void)priority; // Priority is used when creating the actual transaction in addBlock
+
         return Result<void, Error>::ok();
     }
 
     template <typename T>
     Result<void, Error> Blockit<T>::addBlock(const std::vector<ledger::Transaction<T>> &transactions) {
+        std::unique_lock lock(mutex_);
         if (!initialized_)
             return Result<void, Error>::err(Error::invalid_argument("Store not initialized"));
 
@@ -186,12 +220,17 @@ namespace blockit {
         ledger::Block<T> block(transactions);
 
         // Add block to chain
-        if (!chain_.addBlock(block)) {
-            return Result<void, Error>::err(Error::invalid_argument("Failed to add block to chain"));
+        auto add_result = chain_.addBlock(block);
+        if (!add_result.is_ok()) {
+            return Result<void, Error>::err(add_result.error());
         }
 
         // Get the added block
-        const auto &added_block = chain_.blocks_.back();
+        auto last_block_result = chain_.getLastBlock();
+        if (!last_block_result.is_ok()) {
+            return Result<void, Error>::err(last_block_result.error());
+        }
+        const auto &added_block = last_block_result.value();
 
         // Store block in storage
         auto store_result = store_.storeBlock(
@@ -205,7 +244,7 @@ namespace blockit {
         // Store transactions and create anchors
         for (const auto &tx : transactions) {
             // Store transaction in storage
-            auto tx_payload = tx.serializeBinary();
+            auto tx_payload = tx.serialize();
             Vector<u8> payload(tx_payload.begin(), tx_payload.end());
 
             auto tx_result = store_.storeTransaction(String(tx.uuid_.c_str()), added_block.index_, tx.timestamp_.sec,
@@ -216,7 +255,7 @@ namespace blockit {
             }
 
             // Check if this transaction has a pending anchor
-            auto anchor_it = pending_anchors_.find(tx.uuid_);
+            auto anchor_it = pending_anchors_.find(std::string(tx.uuid_.c_str()));
             if (anchor_it != pending_anchors_.end()) {
                 const auto &[content_id, content_hash] = anchor_it->second;
 
@@ -262,35 +301,45 @@ namespace blockit {
 
     template <typename T>
     Result<bool, Error> Blockit<T>::verifyContent(const String &content_id, const Vector<u8> &content_bytes) {
+        std::shared_lock lock(mutex_);
         if (!initialized_)
             return Result<bool, Error>::err(Error::invalid_argument("Store not initialized"));
         return store_.verifyAnchor(content_id, content_bytes);
     }
 
     template <typename T> Optional<storage::Anchor> Blockit<T>::getAnchor(const String &content_id) {
+        std::shared_lock lock(mutex_);
         if (!initialized_)
             return Optional<storage::Anchor>();
         return store_.getAnchor(content_id);
     }
 
     template <typename T> i64 Blockit<T>::getBlockCount() const {
+        std::shared_lock lock(mutex_);
         return const_cast<storage::FileStore &>(store_).getBlockCount();
     }
 
     template <typename T> i64 Blockit<T>::getTransactionCount() const {
+        std::shared_lock lock(mutex_);
         return const_cast<storage::FileStore &>(store_).getTransactionCount();
     }
 
     template <typename T> i64 Blockit<T>::getAnchorCount() const {
+        std::shared_lock lock(mutex_);
         return const_cast<storage::FileStore &>(store_).getAnchorCount();
     }
 
     template <typename T> Result<bool, Error> Blockit<T>::verifyConsistency() {
+        std::shared_lock lock(mutex_);
         if (!initialized_)
             return Result<bool, Error>::err(Error::invalid_argument("Store not initialized"));
 
         // Check blockchain validity
-        if (!chain_.isValid()) {
+        auto valid_result = chain_.isValid();
+        if (!valid_result.is_ok()) {
+            return Result<bool, Error>::err(valid_result.error());
+        }
+        if (!valid_result.value()) {
             return Result<bool, Error>::ok(false);
         }
 
@@ -304,8 +353,8 @@ namespace blockit {
         }
 
         // Check that block counts match
-        i64 chain_blocks = static_cast<i64>(chain_.blocks_.size());
-        i64 db_blocks = store_.getBlockCount();
+        i64 chain_blocks = static_cast<i64>(chain_.getChainLength());
+        i64 db_blocks = const_cast<storage::FileStore &>(store_).getBlockCount();
 
         return Result<bool, Error>::ok(chain_blocks == db_blocks);
     }

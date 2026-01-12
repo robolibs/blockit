@@ -12,7 +12,7 @@ set(PROJECT_VERSION "0.0.3")
 #   Pkg:    set(LIB_DEPS "pkg::name" ...)  # Uses pkg-config
 set(LIB_DEPS
     "echo|https://github.com/bresilla/echo.git|0.0.23"
-    "datapod|https://github.com/robolibs/datapod.git|0.0.34"
+    "datapod|https://github.com/robolibs/datapod.git|0.0.36"
     "keylock|https://github.com/bresilla/keylock.git|0.0.4"
     "pkg::libsodium"
 )
