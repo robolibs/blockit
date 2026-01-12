@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.0.3] - 2026-01-12
+
+### <!-- 0 -->⛰️  Features
+
+- Refactor storage to use a file-based system
+
 ## [0.0.2] - 2026-01-12
 
 ### <!-- 0 -->⛰️  Features
