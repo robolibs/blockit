@@ -1,7 +1,7 @@
 #pragma once
 
 #include "did.hpp"
-#include <blockit/ledger/key.hpp>
+#include <blockit/key.hpp>
 #include <datapod/datapod.hpp>
 
 namespace blockit {

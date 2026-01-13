@@ -1,6 +1,6 @@
 #pragma once
 
-#include <blockit/ledger/key.hpp>
+#include <blockit/key.hpp>
 #include <datapod/datapod.hpp>
 #include <regex>
 #include <string>

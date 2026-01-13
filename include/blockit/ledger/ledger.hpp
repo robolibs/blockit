@@ -11,5 +11,8 @@
 #include "validator.hpp"
 
 namespace blockit {
-    // Aggregates ledger headers under blockit
+    namespace ledger {
+        // Ledger components are now in blockit::ledger namespace
+        // Backward-compatible using declarations are in each header
+    } // namespace ledger
 } // namespace blockit

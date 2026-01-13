@@ -2,7 +2,7 @@
 
 #include "did_registry.hpp"
 #include "verifiable_credential.hpp"
-#include <blockit/ledger/key.hpp>
+#include <blockit/key.hpp>
 #include <chrono>
 #include <datapod/datapod.hpp>
 
