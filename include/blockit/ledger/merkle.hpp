@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace blockit::ledger {
+namespace blockit {
 
     class MerkleTree {
       private:
@@ -12,16 +12,17 @@ namespace blockit::ledger {
         std::vector<std::vector<std::string>> tree_levels_;
         std::string root_hash_;
 
-        inline std::string hashData(const std::string &data) const {
+        inline dp::Result<std::string, dp::Error> hashData(const std::string &data) const {
             keylock::keylock crypto(keylock::Algorithm::XChaCha20_Poly1305, keylock::HashAlgorithm::SHA256);
-            std::vector<uint8_t> data_vec(data.begin(), data.end());
+            std::vector<dp::u8> data_vec(data.begin(), data.end());
             auto hash_result = crypto.hash(data_vec);
             if (hash_result.success)
-                return keylock::keylock::to_hex(hash_result.data);
-            return "";
+                return dp::Result<std::string, dp::Error>::ok(keylock::keylock::to_hex(hash_result.data));
+            return dp::Result<std::string, dp::Error>::err(dp::Error::io_error("Failed to hash data"));
         }
 
-        inline std::string combineHashes(const std::string &left, const std::string &right) const {
+        inline dp::Result<std::string, dp::Error> combineHashes(const std::string &left,
+                                                                const std::string &right) const {
             return hashData(left + right);
         }
 
@@ -34,41 +35,68 @@ namespace blockit::ledger {
                 return;
             }
             leaves_ = transaction_strings;
-            buildTree();
+            auto result = buildTree();
+            // Ignore build errors in constructor, root_hash_ will be empty on failure
+            (void)result;
         }
 
-        inline void buildTree() {
+        inline dp::Result<void, dp::Error> buildTree() {
             if (leaves_.empty()) {
                 root_hash_ = "";
-                return;
+                return dp::Result<void, dp::Error>::ok();
             }
             tree_levels_.clear();
             std::vector<std::string> current_level;
-            for (const auto &leaf : leaves_)
-                current_level.push_back(hashData(leaf));
+            for (const auto &leaf : leaves_) {
+                auto hash_result = hashData(leaf);
+                if (!hash_result.is_ok()) {
+                    return dp::Result<void, dp::Error>::err(hash_result.error());
+                }
+                current_level.push_back(hash_result.value());
+            }
             tree_levels_.push_back(current_level);
             while (current_level.size() > 1) {
                 std::vector<std::string> next_level;
                 for (size_t i = 0; i < current_level.size(); i += 2) {
+                    dp::Result<std::string, dp::Error> combined;
                     if (i + 1 < current_level.size())
-                        next_level.push_back(combineHashes(current_level[i], current_level[i + 1]));
+                        combined = combineHashes(current_level[i], current_level[i + 1]);
                     else
-                        next_level.push_back(combineHashes(current_level[i], current_level[i]));
+                        combined = combineHashes(current_level[i], current_level[i]);
+                    if (!combined.is_ok()) {
+                        return dp::Result<void, dp::Error>::err(combined.error());
+                    }
+                    next_level.push_back(combined.value());
                 }
                 tree_levels_.push_back(next_level);
                 current_level = next_level;
             }
             root_hash_ = current_level.empty() ? "" : current_level[0];
+            return dp::Result<void, dp::Error>::ok();
         }
 
-        inline std::string getRoot() const { return root_hash_; }
+        inline dp::Result<std::string, dp::Error> getRoot() const {
+            if (leaves_.empty()) {
+                return dp::Result<std::string, dp::Error>::err(dp::Error::invalid_argument("Merkle tree is empty"));
+            }
+            return dp::Result<std::string, dp::Error>::ok(root_hash_);
+        }
+
+        // Non-Result version for backward compatibility
+        inline std::string getRootUnsafe() const { return root_hash_; }
 
         inline bool isEmpty() const { return leaves_.empty(); }
 
-        inline std::vector<std::string> getProof(size_t transaction_index) const {
+        inline dp::Result<std::vector<std::string>, dp::Error> getProof(size_t transaction_index) const {
             std::vector<std::string> proof;
-            if (transaction_index >= leaves_.size() || tree_levels_.empty())
-                return proof;
+            if (transaction_index >= leaves_.size()) {
+                return dp::Result<std::vector<std::string>, dp::Error>::err(
+                    dp::Error::out_of_range("Transaction index out of range"));
+            }
+            if (tree_levels_.empty()) {
+                return dp::Result<std::vector<std::string>, dp::Error>::err(
+                    dp::Error::invalid_argument("Merkle tree not built"));
+            }
             size_t current_index = transaction_index;
             for (size_t level = 0; level < tree_levels_.size() - 1; level++) {
                 const auto &current_level_nodes = tree_levels_[level];
@@ -79,27 +107,44 @@ namespace blockit::ledger {
                     proof.push_back(current_level_nodes[current_index]);
                 current_index = current_index / 2;
             }
-            return proof;
+            return dp::Result<std::vector<std::string>, dp::Error>::ok(std::move(proof));
         }
 
-        inline bool verifyProof(const std::string &transaction_data, size_t transaction_index,
-                                const std::vector<std::string> &proof) const {
-            if (proof.empty() && leaves_.size() == 1)
-                return hashData(transaction_data) == root_hash_;
-            std::string current_hash = hashData(transaction_data);
+        inline dp::Result<bool, dp::Error> verifyProof(const std::string &transaction_data, size_t transaction_index,
+                                                       const std::vector<std::string> &proof) const {
+            if (proof.empty() && leaves_.size() == 1) {
+                auto hash_result = hashData(transaction_data);
+                if (!hash_result.is_ok()) {
+                    return dp::Result<bool, dp::Error>::err(hash_result.error());
+                }
+                return dp::Result<bool, dp::Error>::ok(hash_result.value() == root_hash_);
+            }
+
+            auto hash_result = hashData(transaction_data);
+            if (!hash_result.is_ok()) {
+                return dp::Result<bool, dp::Error>::err(hash_result.error());
+            }
+            std::string current_hash = hash_result.value();
             size_t current_index = transaction_index;
+
             for (const auto &proof_hash : proof) {
+                dp::Result<std::string, dp::Error> combined;
                 if (current_index % 2 == 0)
-                    current_hash = combineHashes(current_hash, proof_hash);
+                    combined = combineHashes(current_hash, proof_hash);
                 else
-                    current_hash = combineHashes(proof_hash, current_hash);
+                    combined = combineHashes(proof_hash, current_hash);
+                if (!combined.is_ok()) {
+                    return dp::Result<bool, dp::Error>::err(combined.error());
+                }
+                current_hash = combined.value();
                 current_index = current_index / 2;
             }
-            return current_hash == root_hash_;
+            return dp::Result<bool, dp::Error>::ok(current_hash == root_hash_);
         }
 
-        inline bool verifyProof(const std::string &transaction_data, const std::vector<std::string> &proof,
-                                const std::string &expected_root) const {
+        inline dp::Result<bool, dp::Error> verifyProof(const std::string &transaction_data,
+                                                       const std::vector<std::string> &proof,
+                                                       const std::string &expected_root) const {
             // Find the index of the transaction
             size_t index = 0;
             bool found = false;
@@ -112,46 +157,63 @@ namespace blockit::ledger {
             }
 
             // If not found in leaves, still try to verify with index 0
-            // This handles the case where we're verifying external data
             if (!found && !proof.empty()) {
-                // Reconstruct root from proof assuming index 0
-                std::string current_hash = hashData(transaction_data);
+                auto hash_result = hashData(transaction_data);
+                if (!hash_result.is_ok()) {
+                    return dp::Result<bool, dp::Error>::err(hash_result.error());
+                }
+                std::string current_hash = hash_result.value();
                 size_t current_index = 0;
                 for (const auto &proof_hash : proof) {
+                    dp::Result<std::string, dp::Error> combined;
                     if (current_index % 2 == 0)
-                        current_hash = combineHashes(current_hash, proof_hash);
+                        combined = combineHashes(current_hash, proof_hash);
                     else
-                        current_hash = combineHashes(proof_hash, current_hash);
+                        combined = combineHashes(proof_hash, current_hash);
+                    if (!combined.is_ok()) {
+                        return dp::Result<bool, dp::Error>::err(combined.error());
+                    }
+                    current_hash = combined.value();
                     current_index = current_index / 2;
                 }
-                return current_hash == expected_root;
+                return dp::Result<bool, dp::Error>::ok(current_hash == expected_root);
             }
 
             // If found, verify using the index
             if (found) {
-                return verifyProof(transaction_data, index, proof) && root_hash_ == expected_root;
+                auto verify_result = verifyProof(transaction_data, index, proof);
+                if (!verify_result.is_ok()) {
+                    return verify_result;
+                }
+                return dp::Result<bool, dp::Error>::ok(verify_result.value() && root_hash_ == expected_root);
             }
 
             // Single element tree case
             if (proof.empty() && leaves_.size() == 1) {
-                return hashData(transaction_data) == expected_root;
+                auto hash_result = hashData(transaction_data);
+                if (!hash_result.is_ok()) {
+                    return dp::Result<bool, dp::Error>::err(hash_result.error());
+                }
+                return dp::Result<bool, dp::Error>::ok(hash_result.value() == expected_root);
             }
 
-            return false;
+            return dp::Result<bool, dp::Error>::ok(false);
         }
 
         inline size_t getTransactionCount() const { return leaves_.size(); }
 
-        inline std::vector<std::string> generateProof(const std::string &transaction_data) const {
+        inline dp::Result<std::vector<std::string>, dp::Error>
+        generateProof(const std::string &transaction_data) const {
             // Find the index of the transaction
             for (size_t i = 0; i < leaves_.size(); ++i) {
                 if (leaves_[i] == transaction_data) {
                     return getProof(i);
                 }
             }
-            // Return empty proof if transaction not found
-            return std::vector<std::string>();
+            // Return error if transaction not found
+            return dp::Result<std::vector<std::string>, dp::Error>::err(
+                dp::Error::not_found("Transaction not found in tree"));
         }
     };
 
-} // namespace blockit::ledger
+} // namespace blockit

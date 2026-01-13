@@ -37,7 +37,9 @@ TEST_SUITE("Integration Tests") {
         tx.signTransaction(privateKey);
 
         // Verify transaction is valid
-        CHECK(tx.isValid());
+        auto tx_valid = tx.isValid();
+        CHECK(tx_valid.is_ok());
+        CHECK(tx_valid.value());
         CHECK(blockchain.canParticipantPerform("alice", "create_transaction"));
 
         // Create block with transaction
@@ -46,21 +48,25 @@ TEST_SUITE("Integration Tests") {
         // Verify block structure
         CHECK(block.transactions_.size() == 1);
         CHECK(block.merkle_root_.size() > 0);
-        CHECK(block.verifyTransaction(0)); // Verify first transaction by index
+        auto verify0 = block.verifyTransaction(0);
+        CHECK(verify0.is_ok());
+        CHECK(verify0.value()); // Verify first transaction by index
 
         // Add block to chain
-        CHECK(blockchain.addBlock(block));
+        CHECK(blockchain.addBlock(block).is_ok());
         CHECK(blockchain.getChainLength() == 2); // Genesis + new block
 
         // Verify chain integrity
-        CHECK(blockchain.isChainValid());
+        auto chain_valid = blockchain.isChainValid();
+        CHECK(chain_valid.is_ok());
+        CHECK(chain_valid.value());
 
         // Check double-spend prevention
         CHECK(blockchain.isTransactionUsed("integration-tx-001"));
 
         // Try to add same transaction again (should fail)
         chain::Block<IntegrationTestData> duplicateBlock({tx});
-        CHECK_FALSE(blockchain.addBlock(duplicateBlock));
+        CHECK_FALSE(blockchain.addBlock(duplicateBlock).is_ok());
     }
 
     TEST_CASE("Multi-participant blockchain workflow") {
@@ -104,12 +110,14 @@ TEST_SUITE("Integration Tests") {
 
         // Add all transactions in a single block
         chain::Block<IntegrationTestData> workflowBlock(transactions);
-        CHECK(blockchain.addBlock(workflowBlock));
+        CHECK(blockchain.addBlock(workflowBlock).is_ok());
 
         // Verify all transactions are recorded
         for (size_t i = 0; i < transactions.size(); i++) {
-            CHECK(blockchain.isTransactionUsed(transactions[i].uuid_));
-            CHECK(workflowBlock.verifyTransaction(i)); // Verify transaction by index
+            CHECK(blockchain.isTransactionUsed(std::string(transactions[i].uuid_.c_str())));
+            auto verify_i = workflowBlock.verifyTransaction(i);
+            CHECK(verify_i.is_ok());
+            CHECK(verify_i.value()); // Verify transaction by index
         }
 
         // Verify Merkle tree integrity
@@ -118,12 +126,18 @@ TEST_SUITE("Integration Tests") {
             tx_strings.push_back(txn.toString());
         }
         chain::MerkleTree merkleTree(tx_strings);
-        CHECK(merkleTree.getRoot() == workflowBlock.merkle_root_);
+        auto root_result = merkleTree.getRoot();
+        CHECK(root_result.is_ok());
+        CHECK(root_result.value() == std::string(workflowBlock.merkle_root_.c_str()));
 
         // Test transaction verification through Merkle proof
-        for (const auto &tx : transactions) {
-            auto proof = merkleTree.generateProof(tx.toString());
-            CHECK(merkleTree.verifyProof(tx.toString(), proof, workflowBlock.merkle_root_));
+        for (size_t i = 0; i < transactions.size(); i++) {
+            auto proof_result = merkleTree.getProof(i);
+            REQUIRE(proof_result.is_ok());
+            auto proof = proof_result.value();
+            auto verify_result = merkleTree.verifyProof(transactions[i].toString(), i, proof);
+            CHECK(verify_result.is_ok());
+            CHECK(verify_result.value());
         }
     }
 
@@ -161,16 +175,18 @@ TEST_SUITE("Integration Tests") {
             }
 
             chain::Block<IntegrationTestData> block(blockTxs);
-            CHECK(blockchain.addBlock(block));
+            CHECK(blockchain.addBlock(block).is_ok());
         }
 
         // Verify final state consistency
-        CHECK(blockchain.isChainValid());
+        auto chain_valid = blockchain.isChainValid();
+        CHECK(chain_valid.is_ok());
+        CHECK(chain_valid.value());
         CHECK(blockchain.getChainLength() == 6); // Genesis + 5 blocks
 
         // Verify all transactions are accounted for
         for (const auto &tx : concurrentTxs) {
-            CHECK(blockchain.isTransactionUsed(tx.uuid_));
+            CHECK(blockchain.isTransactionUsed(std::string(tx.uuid_.c_str())));
         }
 
         // Verify participant states
@@ -240,16 +256,18 @@ TEST_SUITE("Integration Tests") {
             }
 
             chain::Block<IntegrationTestData> timeSlotBlock(timeSlotTxs);
-            CHECK(farmChain.addBlock(timeSlotBlock));
+            CHECK(farmChain.addBlock(timeSlotBlock).is_ok());
         }
 
         // Verify complete farming day integration
-        CHECK(farmChain.isChainValid());
+        auto chain_valid = farmChain.isChainValid();
+        CHECK(chain_valid.is_ok());
+        CHECK(chain_valid.value());
         CHECK(farmChain.getChainLength() == 4); // Genesis + 3 operational blocks
 
         // Verify all farming operations are recorded
         for (const auto &op : dailyOperations) {
-            CHECK(farmChain.isTransactionUsed(op.uuid_));
+            CHECK(farmChain.isTransactionUsed(std::string(op.uuid_.c_str())));
         }
 
         // Verify ecosystem integrity
@@ -258,7 +276,9 @@ TEST_SUITE("Integration Tests") {
         }
 
         // Test audit trail capabilities
-        auto lastBlock = farmChain.getLastBlock();
+        auto lastBlock_result = farmChain.getLastBlock();
+        REQUIRE(lastBlock_result.is_ok());
+        auto lastBlock = lastBlock_result.value();
         CHECK(lastBlock.transactions_.size() == 1); // Management report
         CHECK(lastBlock.transactions_[0].function_.type == "oversight");
     }
@@ -301,14 +321,16 @@ TEST_SUITE("Integration Tests") {
             }
 
             chain::Block<IntegrationTestData> batchBlock(batchTxs);
-            CHECK(perfChain.addBlock(batchBlock));
+            CHECK(perfChain.addBlock(batchBlock).is_ok());
         }
 
         auto endTime = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
 
         // Performance assertions
-        CHECK(perfChain.isChainValid());
+        auto chain_valid = perfChain.isChainValid();
+        CHECK(chain_valid.is_ok());
+        CHECK(chain_valid.value());
         CHECK(perfChain.getChainLength() == (numTransactions / txsPerBlock) + 1); // +1 for genesis
 
         // Verify transaction throughput (should be reasonable for testing)

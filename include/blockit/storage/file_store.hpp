@@ -5,6 +5,8 @@
 #include <fstream>
 #include <keylock/keylock.hpp>
 #include <map>
+#include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 
 namespace blockit::storage {
@@ -132,6 +134,55 @@ namespace blockit::storage {
         }
     };
 
+    /// Validator record for PoA storage
+    struct ValidatorRecord {
+        String validator_id;
+        String participant_id;
+        Vector<u8> identity_data; // Serialized Key
+        i32 weight = 1;
+        i32 status = 0; // 0 = ACTIVE, 1 = OFFLINE, 2 = REVOKED
+        i64 last_seen = 0;
+        i64 created_at = 0;
+
+        auto members() {
+            return std::tie(validator_id, participant_id, identity_data, weight, status, last_seen, created_at);
+        }
+        auto members() const {
+            return std::tie(validator_id, participant_id, identity_data, weight, status, last_seen, created_at);
+        }
+    };
+
+    /// DID Document record for storage
+    struct DIDRecord {
+        String did;
+        Vector<u8> document; // Serialized DIDDocument
+        u32 version{0};
+        i64 created_at{0};
+        i64 updated_at{0};
+        u8 status{0}; // 0 = Active, 1 = Deactivated
+
+        auto members() { return std::tie(did, document, version, created_at, updated_at, status); }
+        auto members() const { return std::tie(did, document, version, created_at, updated_at, status); }
+    };
+
+    /// Credential record for storage
+    struct CredentialRecord {
+        String credential_id;
+        String issuer_did;
+        String subject_did;
+        Vector<u8> credential; // Serialized VerifiableCredential
+        u8 status{0};          // 0 = Active, 1 = Revoked, 2 = Suspended, 3 = Expired
+        i64 issued_at{0};
+        i64 expires_at{0};
+
+        auto members() {
+            return std::tie(credential_id, issuer_did, subject_did, credential, status, issued_at, expires_at);
+        }
+        auto members() const {
+            return std::tie(credential_id, issuer_did, subject_did, credential, status, issued_at, expires_at);
+        }
+    };
+
     /// Query filter for ledger queries
     struct LedgerQuery {
         Optional<i64> block_height_min;
@@ -191,15 +242,32 @@ namespace blockit::storage {
         FileStore(const FileStore &) = delete;
         FileStore &operator=(const FileStore &) = delete;
 
-        inline FileStore(FileStore &&other) noexcept
-            : base_path_(std::move(other.base_path_)), is_open_(other.is_open_), sync_mode_(other.sync_mode_),
-              block_index_(std::move(other.block_index_)), tx_index_(std::move(other.tx_index_)),
-              anchor_index_(std::move(other.anchor_index_)), hash_to_height_(std::move(other.hash_to_height_)) {
+        inline FileStore(FileStore &&other) noexcept {
+            std::unique_lock lock(other.mutex_);
+            base_path_ = std::move(other.base_path_);
+            is_open_ = other.is_open_;
+            sync_mode_ = other.sync_mode_;
+            block_index_ = std::move(other.block_index_);
+            tx_index_ = std::move(other.tx_index_);
+            anchor_index_ = std::move(other.anchor_index_);
+            validator_index_ = std::move(other.validator_index_);
+            did_index_ = std::move(other.did_index_);
+            credential_index_ = std::move(other.credential_index_);
+            hash_to_height_ = std::move(other.hash_to_height_);
+            pending_blocks_ = std::move(other.pending_blocks_);
+            pending_transactions_ = std::move(other.pending_transactions_);
+            pending_anchors_ = std::move(other.pending_anchors_);
+            pending_validators_ = std::move(other.pending_validators_);
+            pending_dids_ = std::move(other.pending_dids_);
+            pending_credentials_ = std::move(other.pending_credentials_);
             other.is_open_ = false;
         }
 
         inline FileStore &operator=(FileStore &&other) noexcept {
             if (this != &other) {
+                std::unique_lock lock1(mutex_, std::defer_lock);
+                std::unique_lock lock2(other.mutex_, std::defer_lock);
+                std::lock(lock1, lock2);
                 close();
                 base_path_ = std::move(other.base_path_);
                 is_open_ = other.is_open_;
@@ -207,7 +275,16 @@ namespace blockit::storage {
                 block_index_ = std::move(other.block_index_);
                 tx_index_ = std::move(other.tx_index_);
                 anchor_index_ = std::move(other.anchor_index_);
+                validator_index_ = std::move(other.validator_index_);
+                did_index_ = std::move(other.did_index_);
+                credential_index_ = std::move(other.credential_index_);
                 hash_to_height_ = std::move(other.hash_to_height_);
+                pending_blocks_ = std::move(other.pending_blocks_);
+                pending_transactions_ = std::move(other.pending_transactions_);
+                pending_anchors_ = std::move(other.pending_anchors_);
+                pending_validators_ = std::move(other.pending_validators_);
+                pending_dids_ = std::move(other.pending_dids_);
+                pending_credentials_ = std::move(other.pending_credentials_);
                 other.is_open_ = false;
             }
             return *this;
@@ -215,12 +292,13 @@ namespace blockit::storage {
 
         /// Open or create storage at given path (directory)
         inline Result<void, Error> open(const String &path, const OpenOptions &opts = OpenOptions{}) {
+            std::unique_lock lock(mutex_);
             try {
                 base_path_ = std::string(path.c_str());
                 sync_mode_ = opts.sync_mode;
 
                 std::filesystem::create_directories(base_path_);
-                loadIndexes();
+                loadIndexesUnsafe();
 
                 is_open_ = true;
                 return Result<void, Error>::ok();
@@ -232,24 +310,31 @@ namespace blockit::storage {
 
         /// Close storage
         inline void close() {
+            std::unique_lock lock(mutex_);
             if (is_open_) {
-                flushIndexes();
+                flushIndexesUnsafe();
                 is_open_ = false;
             }
         }
 
         /// Check if storage is open
-        inline bool isOpen() const { return is_open_; }
+        inline bool isOpen() const {
+            std::shared_lock lock(mutex_);
+            return is_open_;
+        }
 
         /// Initialize core schema (creates necessary files)
         inline Result<void, Error> initializeCoreSchema() {
+            std::unique_lock lock(mutex_);
             if (!is_open_)
                 return Result<void, Error>::err(Error::invalid_argument("Store not open"));
 
             try {
+                std::lock_guard<std::mutex> file_lock(file_mutex_);
                 auto blocks_path = base_path_ / "blocks.dat";
                 auto tx_path = base_path_ / "transactions.dat";
                 auto anchors_path = base_path_ / "anchors.dat";
+                auto validators_path = base_path_ / "validators.dat";
 
                 if (!std::filesystem::exists(blocks_path)) {
                     std::ofstream(blocks_path, std::ios::binary).close();
@@ -260,6 +345,9 @@ namespace blockit::storage {
                 if (!std::filesystem::exists(anchors_path)) {
                     std::ofstream(anchors_path, std::ios::binary).close();
                 }
+                if (!std::filesystem::exists(validators_path)) {
+                    std::ofstream(validators_path, std::ios::binary).close();
+                }
 
                 return Result<void, Error>::ok();
             } catch (const std::exception &e) {
@@ -269,6 +357,7 @@ namespace blockit::storage {
 
         /// Register schema extension (no-op for file store)
         inline Result<void, Error> registerExtension(const ISchemaExtension &) {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return Result<void, Error>::err(Error::invalid_argument("Store not open"));
             return Result<void, Error>::ok();
@@ -281,16 +370,19 @@ namespace blockit::storage {
         class TxGuard {
           public:
             inline explicit TxGuard(FileStore &store) : store_(store), committed_(false) {
-                store_.pending_blocks_.clear();
-                store_.pending_transactions_.clear();
-                store_.pending_anchors_.clear();
+                // Note: Do NOT clear pending data on construction.
+                // TxGuard commits or rolls back any pending changes.
             }
 
             inline ~TxGuard() {
                 if (!committed_) {
+                    std::unique_lock lock(store_.mutex_);
                     store_.pending_blocks_.clear();
                     store_.pending_transactions_.clear();
                     store_.pending_anchors_.clear();
+                    store_.pending_validators_.clear();
+                    store_.pending_dids_.clear();
+                    store_.pending_credentials_.clear();
                 }
             }
 
@@ -306,9 +398,13 @@ namespace blockit::storage {
 
             inline void rollback() {
                 if (!committed_) {
+                    std::unique_lock lock(store_.mutex_);
                     store_.pending_blocks_.clear();
                     store_.pending_transactions_.clear();
                     store_.pending_anchors_.clear();
+                    store_.pending_validators_.clear();
+                    store_.pending_dids_.clear();
+                    store_.pending_credentials_.clear();
                     committed_ = true;
                 }
             }
@@ -327,6 +423,7 @@ namespace blockit::storage {
         /// Store a block in the ledger
         inline Result<void, Error> storeBlock(i64 index, const String &hash, const String &previous_hash,
                                               const String &merkle_root, i64 timestamp, i64 nonce) {
+            std::unique_lock lock(mutex_);
             if (!is_open_)
                 return Result<void, Error>::err(Error::invalid_argument("Store not open"));
 
@@ -346,6 +443,7 @@ namespace blockit::storage {
         /// Store a transaction in the ledger
         inline Result<void, Error> storeTransaction(const String &tx_id, i64 block_height, i64 timestamp, i16 priority,
                                                     const Vector<u8> &payload) {
+            std::unique_lock lock(mutex_);
             if (!is_open_)
                 return Result<void, Error>::err(Error::invalid_argument("Store not open"));
 
@@ -364,6 +462,7 @@ namespace blockit::storage {
         /// Create an anchor linking external content to on-chain transaction
         inline Result<void, Error> createAnchor(const String &content_id, const Vector<u8> &content_hash,
                                                 const TxRef &tx_ref) {
+            std::unique_lock lock(mutex_);
             if (!is_open_)
                 return Result<void, Error>::err(Error::invalid_argument("Store not open"));
 
@@ -381,6 +480,7 @@ namespace blockit::storage {
 
         /// Get anchor by content ID
         inline Optional<Anchor> getAnchor(const String &content_id) {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return Optional<Anchor>();
 
@@ -397,11 +497,12 @@ namespace blockit::storage {
             if (it == anchor_index_.end())
                 return Optional<Anchor>();
 
-            return readAnchorAt(it->second);
+            return readAnchorAtUnsafe(it->second);
         }
 
         /// Get all anchors for a specific block height
         inline Vector<Anchor> getAnchorsByBlock(i64 block_height) {
+            std::shared_lock lock(mutex_);
             Vector<Anchor> anchors;
             if (!is_open_)
                 return anchors;
@@ -414,7 +515,7 @@ namespace blockit::storage {
             }
 
             // Read all anchors and filter
-            auto all_anchors = readAllAnchors();
+            auto all_anchors = readAllAnchorsUnsafe();
             for (auto &anchor : all_anchors) {
                 if (anchor.block_height == block_height) {
                     anchors.push_back(std::move(anchor));
@@ -426,6 +527,7 @@ namespace blockit::storage {
 
         /// Get all anchors within a height range
         inline Vector<Anchor> getAnchorsInRange(i64 min_height, i64 max_height) {
+            std::shared_lock lock(mutex_);
             Vector<Anchor> anchors;
             if (!is_open_)
                 return anchors;
@@ -438,7 +540,7 @@ namespace blockit::storage {
             }
 
             // Read all anchors and filter
-            auto all_anchors = readAllAnchors();
+            auto all_anchors = readAllAnchorsUnsafe();
             for (auto &anchor : all_anchors) {
                 if (anchor.block_height >= min_height && anchor.block_height <= max_height) {
                     anchors.push_back(std::move(anchor));
@@ -448,13 +550,344 @@ namespace blockit::storage {
             return anchors;
         }
 
+        // ===========================================
+        // Validator Storage (PoA)
+        // ===========================================
+
+        /// Store validator record
+        inline Result<void, Error> storeValidator(const ValidatorRecord &record) {
+            std::unique_lock lock(mutex_);
+            if (!is_open_)
+                return Result<void, Error>::err(Error::invalid_argument("Store not open"));
+
+            pending_validators_.push_back(record);
+            return Result<void, Error>::ok();
+        }
+
+        /// Load validator by ID
+        inline Optional<ValidatorRecord> loadValidator(const String &validator_id) {
+            std::shared_lock lock(mutex_);
+            if (!is_open_)
+                return Optional<ValidatorRecord>();
+
+            // Check pending first
+            for (const auto &record : pending_validators_) {
+                if (std::string(record.validator_id.c_str()) == std::string(validator_id.c_str())) {
+                    return Optional<ValidatorRecord>(record);
+                }
+            }
+
+            // Check index
+            std::string key(validator_id.c_str());
+            auto it = validator_index_.find(key);
+            if (it == validator_index_.end())
+                return Optional<ValidatorRecord>();
+
+            return readValidatorAtUnsafe(it->second);
+        }
+
+        /// Load all validators
+        inline Vector<ValidatorRecord> loadAllValidators() {
+            std::shared_lock lock(mutex_);
+            Vector<ValidatorRecord> validators;
+            if (!is_open_)
+                return validators;
+
+            // Read from storage
+            auto stored = readAllValidatorsUnsafe();
+            for (auto &v : stored) {
+                validators.push_back(std::move(v));
+            }
+
+            // Add pending
+            for (const auto &record : pending_validators_) {
+                validators.push_back(record);
+            }
+
+            return validators;
+        }
+
+        /// Update validator status
+        inline Result<void, Error> updateValidatorStatus(const String &validator_id, i32 status) {
+            std::unique_lock lock(mutex_);
+            if (!is_open_)
+                return Result<void, Error>::err(Error::invalid_argument("Store not open"));
+
+            // Check pending first and update
+            for (auto &record : pending_validators_) {
+                if (std::string(record.validator_id.c_str()) == std::string(validator_id.c_str())) {
+                    record.status = status;
+                    return Result<void, Error>::ok();
+                }
+            }
+
+            // Load from storage, update, and mark as pending
+            std::string key(validator_id.c_str());
+            auto it = validator_index_.find(key);
+            if (it == validator_index_.end())
+                return Result<void, Error>::err(Error::not_found("Validator not found"));
+
+            auto existing = readValidatorAtUnsafe(it->second);
+            if (!existing.has_value())
+                return Result<void, Error>::err(Error::not_found("Validator not found"));
+
+            ValidatorRecord updated = *existing;
+            updated.status = status;
+            pending_validators_.push_back(updated);
+
+            return Result<void, Error>::ok();
+        }
+
+        /// Get validator count
+        inline i64 getValidatorCount() {
+            std::shared_lock lock(mutex_);
+            return static_cast<i64>(validator_index_.size() + pending_validators_.size());
+        }
+
+        // ===========================================
+        // DID Storage
+        // ===========================================
+
+        /// Store a DID document
+        inline Result<void, Error> storeDID(const DIDRecord &record) {
+            std::unique_lock lock(mutex_);
+            if (!is_open_)
+                return Result<void, Error>::err(Error::invalid_argument("Store not open"));
+
+            pending_dids_.push_back(record);
+            return Result<void, Error>::ok();
+        }
+
+        /// Load a DID document by DID string
+        inline Optional<DIDRecord> loadDID(const String &did) {
+            std::shared_lock lock(mutex_);
+            if (!is_open_)
+                return Optional<DIDRecord>();
+
+            // Check pending first
+            for (const auto &record : pending_dids_) {
+                if (std::string(record.did.c_str()) == std::string(did.c_str())) {
+                    return Optional<DIDRecord>(record);
+                }
+            }
+
+            // Check index
+            std::string key(did.c_str());
+            auto it = did_index_.find(key);
+            if (it == did_index_.end())
+                return Optional<DIDRecord>();
+
+            return readDIDAtUnsafe(it->second);
+        }
+
+        /// Load all DIDs
+        inline Vector<DIDRecord> loadAllDIDs() {
+            std::shared_lock lock(mutex_);
+            Vector<DIDRecord> dids;
+            if (!is_open_)
+                return dids;
+
+            auto stored = readAllDIDsUnsafe();
+            for (auto &d : stored) {
+                dids.push_back(std::move(d));
+            }
+
+            for (const auto &record : pending_dids_) {
+                dids.push_back(record);
+            }
+
+            return dids;
+        }
+
+        /// Update DID status
+        inline Result<void, Error> updateDIDStatus(const String &did, u8 status) {
+            std::unique_lock lock(mutex_);
+            if (!is_open_)
+                return Result<void, Error>::err(Error::invalid_argument("Store not open"));
+
+            // Check pending first
+            for (auto &record : pending_dids_) {
+                if (std::string(record.did.c_str()) == std::string(did.c_str())) {
+                    record.status = status;
+                    record.updated_at = currentTimestamp();
+                    return Result<void, Error>::ok();
+                }
+            }
+
+            // Load from storage, update, and mark as pending
+            std::string key(did.c_str());
+            auto it = did_index_.find(key);
+            if (it == did_index_.end())
+                return Result<void, Error>::err(Error::not_found("DID not found"));
+
+            auto existing = readDIDAtUnsafe(it->second);
+            if (!existing.has_value())
+                return Result<void, Error>::err(Error::not_found("DID not found"));
+
+            DIDRecord updated = *existing;
+            updated.status = status;
+            updated.updated_at = currentTimestamp();
+            pending_dids_.push_back(updated);
+
+            return Result<void, Error>::ok();
+        }
+
+        /// Get DID count
+        inline i64 getDIDCount() {
+            std::shared_lock lock(mutex_);
+            return static_cast<i64>(did_index_.size() + pending_dids_.size());
+        }
+
+        // ===========================================
+        // Credential Storage
+        // ===========================================
+
+        /// Store a credential
+        inline Result<void, Error> storeCredential(const CredentialRecord &record) {
+            std::unique_lock lock(mutex_);
+            if (!is_open_)
+                return Result<void, Error>::err(Error::invalid_argument("Store not open"));
+
+            pending_credentials_.push_back(record);
+            return Result<void, Error>::ok();
+        }
+
+        /// Load a credential by ID
+        inline Optional<CredentialRecord> loadCredential(const String &credential_id) {
+            std::shared_lock lock(mutex_);
+            if (!is_open_)
+                return Optional<CredentialRecord>();
+
+            // Check pending first
+            for (const auto &record : pending_credentials_) {
+                if (std::string(record.credential_id.c_str()) == std::string(credential_id.c_str())) {
+                    return Optional<CredentialRecord>(record);
+                }
+            }
+
+            // Check index
+            std::string key(credential_id.c_str());
+            auto it = credential_index_.find(key);
+            if (it == credential_index_.end())
+                return Optional<CredentialRecord>();
+
+            return readCredentialAtUnsafe(it->second);
+        }
+
+        /// Load all credentials
+        inline Vector<CredentialRecord> loadAllCredentials() {
+            std::shared_lock lock(mutex_);
+            Vector<CredentialRecord> credentials;
+            if (!is_open_)
+                return credentials;
+
+            auto stored = readAllCredentialsUnsafe();
+            for (auto &c : stored) {
+                credentials.push_back(std::move(c));
+            }
+
+            for (const auto &record : pending_credentials_) {
+                credentials.push_back(record);
+            }
+
+            return credentials;
+        }
+
+        /// Load credentials by subject DID
+        inline Vector<CredentialRecord> loadCredentialsBySubject(const String &subject_did) {
+            std::shared_lock lock(mutex_);
+            Vector<CredentialRecord> credentials;
+            if (!is_open_)
+                return credentials;
+
+            std::string subject(subject_did.c_str());
+
+            auto all = readAllCredentialsUnsafe();
+            for (auto &c : all) {
+                if (std::string(c.subject_did.c_str()) == subject) {
+                    credentials.push_back(std::move(c));
+                }
+            }
+
+            for (const auto &record : pending_credentials_) {
+                if (std::string(record.subject_did.c_str()) == subject) {
+                    credentials.push_back(record);
+                }
+            }
+
+            return credentials;
+        }
+
+        /// Load credentials by issuer DID
+        inline Vector<CredentialRecord> loadCredentialsByIssuer(const String &issuer_did) {
+            std::shared_lock lock(mutex_);
+            Vector<CredentialRecord> credentials;
+            if (!is_open_)
+                return credentials;
+
+            std::string issuer(issuer_did.c_str());
+
+            auto all = readAllCredentialsUnsafe();
+            for (auto &c : all) {
+                if (std::string(c.issuer_did.c_str()) == issuer) {
+                    credentials.push_back(std::move(c));
+                }
+            }
+
+            for (const auto &record : pending_credentials_) {
+                if (std::string(record.issuer_did.c_str()) == issuer) {
+                    credentials.push_back(record);
+                }
+            }
+
+            return credentials;
+        }
+
+        /// Update credential status
+        inline Result<void, Error> updateCredentialStatus(const String &credential_id, u8 status) {
+            std::unique_lock lock(mutex_);
+            if (!is_open_)
+                return Result<void, Error>::err(Error::invalid_argument("Store not open"));
+
+            // Check pending first
+            for (auto &record : pending_credentials_) {
+                if (std::string(record.credential_id.c_str()) == std::string(credential_id.c_str())) {
+                    record.status = status;
+                    return Result<void, Error>::ok();
+                }
+            }
+
+            // Load from storage, update, and mark as pending
+            std::string key(credential_id.c_str());
+            auto it = credential_index_.find(key);
+            if (it == credential_index_.end())
+                return Result<void, Error>::err(Error::not_found("Credential not found"));
+
+            auto existing = readCredentialAtUnsafe(it->second);
+            if (!existing.has_value())
+                return Result<void, Error>::err(Error::not_found("Credential not found"));
+
+            CredentialRecord updated = *existing;
+            updated.status = status;
+            pending_credentials_.push_back(updated);
+
+            return Result<void, Error>::ok();
+        }
+
+        /// Get credential count
+        inline i64 getCredentialCount() {
+            std::shared_lock lock(mutex_);
+            return static_cast<i64>(credential_index_.size() + pending_credentials_.size());
+        }
+
         /// Query transactions with filters
         inline Vector<String> queryTransactions(const LedgerQuery &query) {
+            std::shared_lock lock(mutex_);
             Vector<String> tx_ids;
             if (!is_open_)
                 return tx_ids;
 
-            auto all_tx = readAllTransactions();
+            auto all_tx = readAllTransactionsUnsafe();
             Vector<TransactionRecord> filtered;
 
             auto matchesQuery = [&query](const TransactionRecord &tx) {
@@ -500,6 +933,7 @@ namespace blockit::storage {
 
         /// Get block by height
         inline Optional<String> getBlockByHeight(i64 height) {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return Optional<String>();
 
@@ -515,7 +949,7 @@ namespace blockit::storage {
             if (it == block_index_.end())
                 return Optional<String>();
 
-            auto record = readBlockAt(it->second);
+            auto record = readBlockAtUnsafe(it->second);
             if (!record.has_value())
                 return Optional<String>();
 
@@ -524,6 +958,7 @@ namespace blockit::storage {
 
         /// Get block by hash
         inline Optional<String> getBlockByHash(const String &hash) {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return Optional<String>();
 
@@ -540,11 +975,21 @@ namespace blockit::storage {
             if (it == hash_to_height_.end())
                 return Optional<String>();
 
-            return getBlockByHeight(it->second);
+            // Use unsafe version since we already hold lock
+            auto block_it = block_index_.find(it->second);
+            if (block_it == block_index_.end())
+                return Optional<String>();
+
+            auto record = readBlockAtUnsafe(block_it->second);
+            if (!record.has_value())
+                return Optional<String>();
+
+            return Optional<String>(record->toJson());
         }
 
         /// Get transaction by ID
         inline Optional<Vector<u8>> getTransaction(const String &tx_id) {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return Optional<Vector<u8>>();
 
@@ -561,7 +1006,7 @@ namespace blockit::storage {
             if (it == tx_index_.end())
                 return Optional<Vector<u8>>();
 
-            auto record = readTransactionAt(it->second);
+            auto record = readTransactionAtUnsafe(it->second);
             if (!record.has_value())
                 return Optional<Vector<u8>>();
 
@@ -596,6 +1041,7 @@ namespace blockit::storage {
 
         /// Check if chain is continuous (no gaps in block heights)
         inline Result<bool, Error> verifyChainContinuity() {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return Result<bool, Error>::err(Error::invalid_argument("Store not open"));
 
@@ -625,24 +1071,28 @@ namespace blockit::storage {
         // ===========================================
 
         inline i64 getBlockCount() {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return 0;
             return static_cast<i64>(block_index_.size() + pending_blocks_.size());
         }
 
         inline i64 getTransactionCount() {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return 0;
             return static_cast<i64>(tx_index_.size() + pending_transactions_.size());
         }
 
         inline i64 getAnchorCount() {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return 0;
             return static_cast<i64>(anchor_index_.size() + pending_anchors_.size());
         }
 
         inline i64 getLatestBlockHeight() {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return -1;
 
@@ -657,6 +1107,7 @@ namespace blockit::storage {
         }
 
         inline Result<bool, Error> quickCheck() {
+            std::shared_lock lock(mutex_);
             if (!is_open_)
                 return Result<bool, Error>::err(Error::invalid_argument("Store not open"));
 
@@ -688,11 +1139,12 @@ namespace blockit::storage {
 
       private:
         // ===========================================
-        // File I/O with datapod serialization
+        // File I/O with datapod serialization (unsafe - caller must hold lock)
         // ===========================================
 
         template <typename T>
-        inline void appendRecord(const std::filesystem::path &file, const T &record, u64 &offset) {
+        inline void appendRecordUnsafe(const std::filesystem::path &file, const T &record, u64 &offset) {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
             std::ofstream out(file, std::ios::binary | std::ios::app);
             if (!out)
                 throw std::runtime_error("Failed to open file for writing");
@@ -701,7 +1153,7 @@ namespace blockit::storage {
 
             // Serialize using datapod (need mutable copy)
             T mutable_record = record;
-            auto buffer = datapod::serialize(mutable_record);
+            auto buffer = datapod::serialize<Mode::NONE>(mutable_record);
             u32 len = static_cast<u32>(buffer.size());
 
             out.write(reinterpret_cast<const char *>(&len), sizeof(len));
@@ -712,7 +1164,8 @@ namespace blockit::storage {
             }
         }
 
-        template <typename T> inline Optional<T> readRecordAt(const std::filesystem::path &file, u64 offset) {
+        template <typename T> inline Optional<T> readRecordAtUnsafe(const std::filesystem::path &file, u64 offset) {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
             std::ifstream in(file, std::ios::binary);
             if (!in)
                 return Optional<T>();
@@ -732,22 +1185,23 @@ namespace blockit::storage {
             return Optional<T>(datapod::deserialize<Mode::NONE, T>(data));
         }
 
-        inline Optional<BlockRecord> readBlockAt(u64 offset) {
-            return readRecordAt<BlockRecord>(base_path_ / "blocks.dat", offset);
+        inline Optional<BlockRecord> readBlockAtUnsafe(u64 offset) {
+            return readRecordAtUnsafe<BlockRecord>(base_path_ / "blocks.dat", offset);
         }
 
-        inline Optional<TransactionRecord> readTransactionAt(u64 offset) {
-            return readRecordAt<TransactionRecord>(base_path_ / "transactions.dat", offset);
+        inline Optional<TransactionRecord> readTransactionAtUnsafe(u64 offset) {
+            return readRecordAtUnsafe<TransactionRecord>(base_path_ / "transactions.dat", offset);
         }
 
-        inline Optional<Anchor> readAnchorAt(u64 offset) {
-            auto record = readRecordAt<AnchorRecord>(base_path_ / "anchors.dat", offset);
+        inline Optional<Anchor> readAnchorAtUnsafe(u64 offset) {
+            auto record = readRecordAtUnsafe<AnchorRecord>(base_path_ / "anchors.dat", offset);
             if (!record.has_value())
                 return Optional<Anchor>();
             return Optional<Anchor>(record->toAnchor());
         }
 
-        template <typename T> inline Vector<T> readAllRecords(const std::filesystem::path &file) {
+        template <typename T> inline Vector<T> readAllRecordsUnsafe(const std::filesystem::path &file) {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
             Vector<T> records;
             std::ifstream in(file, std::ios::binary);
             if (!in)
@@ -770,12 +1224,12 @@ namespace blockit::storage {
             return records;
         }
 
-        inline Vector<TransactionRecord> readAllTransactions() {
-            return readAllRecords<TransactionRecord>(base_path_ / "transactions.dat");
+        inline Vector<TransactionRecord> readAllTransactionsUnsafe() {
+            return readAllRecordsUnsafe<TransactionRecord>(base_path_ / "transactions.dat");
         }
 
-        inline Vector<Anchor> readAllAnchors() {
-            auto records = readAllRecords<AnchorRecord>(base_path_ / "anchors.dat");
+        inline Vector<Anchor> readAllAnchorsUnsafe() {
+            auto records = readAllRecordsUnsafe<AnchorRecord>(base_path_ / "anchors.dat");
             Vector<Anchor> anchors;
             for (const auto &r : records) {
                 anchors.push_back(r.toAnchor());
@@ -783,22 +1237,53 @@ namespace blockit::storage {
             return anchors;
         }
 
+        inline Optional<ValidatorRecord> readValidatorAtUnsafe(u64 offset) {
+            return readRecordAtUnsafe<ValidatorRecord>(base_path_ / "validators.dat", offset);
+        }
+
+        inline Vector<ValidatorRecord> readAllValidatorsUnsafe() {
+            return readAllRecordsUnsafe<ValidatorRecord>(base_path_ / "validators.dat");
+        }
+
+        inline Optional<DIDRecord> readDIDAtUnsafe(u64 offset) {
+            return readRecordAtUnsafe<DIDRecord>(base_path_ / "dids.dat", offset);
+        }
+
+        inline Vector<DIDRecord> readAllDIDsUnsafe() {
+            return readAllRecordsUnsafe<DIDRecord>(base_path_ / "dids.dat");
+        }
+
+        inline Optional<CredentialRecord> readCredentialAtUnsafe(u64 offset) {
+            return readRecordAtUnsafe<CredentialRecord>(base_path_ / "credentials.dat", offset);
+        }
+
+        inline Vector<CredentialRecord> readAllCredentialsUnsafe() {
+            return readAllRecordsUnsafe<CredentialRecord>(base_path_ / "credentials.dat");
+        }
+
         // ===========================================
-        // Index management
+        // Index management (unsafe - caller must hold lock)
         // ===========================================
 
-        inline void loadIndexes() {
+        inline void loadIndexesUnsafe() {
             block_index_.clear();
             tx_index_.clear();
             anchor_index_.clear();
+            validator_index_.clear();
+            did_index_.clear();
+            credential_index_.clear();
             hash_to_height_.clear();
 
-            loadBlockIndex();
-            loadTransactionIndex();
-            loadAnchorIndex();
+            loadBlockIndexUnsafe();
+            loadTransactionIndexUnsafe();
+            loadAnchorIndexUnsafe();
+            loadValidatorIndexUnsafe();
+            loadDIDIndexUnsafe();
+            loadCredentialIndexUnsafe();
         }
 
-        inline void loadBlockIndex() {
+        inline void loadBlockIndexUnsafe() {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
             auto file = base_path_ / "blocks.dat";
             std::ifstream in(file, std::ios::binary);
             if (!in)
@@ -823,7 +1308,8 @@ namespace blockit::storage {
             }
         }
 
-        inline void loadTransactionIndex() {
+        inline void loadTransactionIndexUnsafe() {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
             auto file = base_path_ / "transactions.dat";
             std::ifstream in(file, std::ios::binary);
             if (!in)
@@ -847,7 +1333,8 @@ namespace blockit::storage {
             }
         }
 
-        inline void loadAnchorIndex() {
+        inline void loadAnchorIndexUnsafe() {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
             auto file = base_path_ / "anchors.dat";
             std::ifstream in(file, std::ios::binary);
             if (!in)
@@ -871,11 +1358,87 @@ namespace blockit::storage {
             }
         }
 
+        inline void loadValidatorIndexUnsafe() {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
+            auto file = base_path_ / "validators.dat";
+            std::ifstream in(file, std::ios::binary);
+            if (!in)
+                return;
+
+            while (in) {
+                u64 record_offset = in.tellg();
+
+                u32 len;
+                in.read(reinterpret_cast<char *>(&len), sizeof(len));
+                if (!in)
+                    break;
+
+                ByteBuf data(len);
+                in.read(reinterpret_cast<char *>(data.data()), len);
+                if (!in)
+                    break;
+
+                auto record = datapod::deserialize<Mode::NONE, ValidatorRecord>(data);
+                validator_index_[std::string(record.validator_id.c_str())] = record_offset;
+            }
+        }
+
+        inline void loadDIDIndexUnsafe() {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
+            auto file = base_path_ / "dids.dat";
+            std::ifstream in(file, std::ios::binary);
+            if (!in)
+                return;
+
+            while (in) {
+                u64 record_offset = in.tellg();
+
+                u32 len;
+                in.read(reinterpret_cast<char *>(&len), sizeof(len));
+                if (!in)
+                    break;
+
+                ByteBuf data(len);
+                in.read(reinterpret_cast<char *>(data.data()), len);
+                if (!in)
+                    break;
+
+                auto record = datapod::deserialize<Mode::NONE, DIDRecord>(data);
+                did_index_[std::string(record.did.c_str())] = record_offset;
+            }
+        }
+
+        inline void loadCredentialIndexUnsafe() {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
+            auto file = base_path_ / "credentials.dat";
+            std::ifstream in(file, std::ios::binary);
+            if (!in)
+                return;
+
+            while (in) {
+                u64 record_offset = in.tellg();
+
+                u32 len;
+                in.read(reinterpret_cast<char *>(&len), sizeof(len));
+                if (!in)
+                    break;
+
+                ByteBuf data(len);
+                in.read(reinterpret_cast<char *>(data.data()), len);
+                if (!in)
+                    break;
+
+                auto record = datapod::deserialize<Mode::NONE, CredentialRecord>(data);
+                credential_index_[std::string(record.credential_id.c_str())] = record_offset;
+            }
+        }
+
         inline void flushPending() {
+            std::unique_lock lock(mutex_);
             // Flush blocks
             for (const auto &record : pending_blocks_) {
                 u64 offset;
-                appendRecord(base_path_ / "blocks.dat", record, offset);
+                appendRecordUnsafe(base_path_ / "blocks.dat", record, offset);
                 block_index_[record.height] = offset;
                 hash_to_height_[std::string(record.hash.c_str())] = record.height;
             }
@@ -884,7 +1447,7 @@ namespace blockit::storage {
             // Flush transactions
             for (const auto &record : pending_transactions_) {
                 u64 offset;
-                appendRecord(base_path_ / "transactions.dat", record, offset);
+                appendRecordUnsafe(base_path_ / "transactions.dat", record, offset);
                 tx_index_[std::string(record.tx_id.c_str())] = offset;
             }
             pending_transactions_.clear();
@@ -892,13 +1455,37 @@ namespace blockit::storage {
             // Flush anchors
             for (const auto &record : pending_anchors_) {
                 u64 offset;
-                appendRecord(base_path_ / "anchors.dat", record, offset);
+                appendRecordUnsafe(base_path_ / "anchors.dat", record, offset);
                 anchor_index_[std::string(record.content_id.c_str())] = offset;
             }
             pending_anchors_.clear();
+
+            // Flush validators
+            for (const auto &record : pending_validators_) {
+                u64 offset;
+                appendRecordUnsafe(base_path_ / "validators.dat", record, offset);
+                validator_index_[std::string(record.validator_id.c_str())] = offset;
+            }
+            pending_validators_.clear();
+
+            // Flush DIDs
+            for (const auto &record : pending_dids_) {
+                u64 offset;
+                appendRecordUnsafe(base_path_ / "dids.dat", record, offset);
+                did_index_[std::string(record.did.c_str())] = offset;
+            }
+            pending_dids_.clear();
+
+            // Flush credentials
+            for (const auto &record : pending_credentials_) {
+                u64 offset;
+                appendRecordUnsafe(base_path_ / "credentials.dat", record, offset);
+                credential_index_[std::string(record.credential_id.c_str())] = offset;
+            }
+            pending_credentials_.clear();
         }
 
-        inline void flushIndexes() {
+        inline void flushIndexesUnsafe() {
             // Indexes are maintained in memory and rebuilt on load
         }
 
@@ -910,16 +1497,26 @@ namespace blockit::storage {
         bool is_open_;
         OpenOptions::Synchronous sync_mode_;
 
+        // Thread safety
+        mutable std::shared_mutex mutex_;
+        mutable std::mutex file_mutex_;
+
         // In-memory indexes
         std::map<i64, u64> block_index_;
         std::unordered_map<std::string, u64> tx_index_;
         std::unordered_map<std::string, u64> anchor_index_;
+        std::unordered_map<std::string, u64> validator_index_;
+        std::unordered_map<std::string, u64> did_index_;
+        std::unordered_map<std::string, u64> credential_index_;
         std::unordered_map<std::string, i64> hash_to_height_;
 
         // Pending writes
         Vector<BlockRecord> pending_blocks_;
         Vector<TransactionRecord> pending_transactions_;
         Vector<AnchorRecord> pending_anchors_;
+        Vector<ValidatorRecord> pending_validators_;
+        Vector<DIDRecord> pending_dids_;
+        Vector<CredentialRecord> pending_credentials_;
     };
 
 } // namespace blockit::storage

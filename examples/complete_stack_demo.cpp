@@ -58,11 +58,11 @@ struct Document {
 class DocumentManager {
   private:
     blockit::Blockit<Document> &store_;
-    std::shared_ptr<blockit::ledger::Crypto> crypto_;
+    std::shared_ptr<blockit::Crypto> crypto_;
     std::map<std::string, Document> documents_; // In-memory document cache
 
   public:
-    DocumentManager(blockit::Blockit<Document> &store, std::shared_ptr<blockit::ledger::Crypto> crypto)
+    DocumentManager(blockit::Blockit<Document> &store, std::shared_ptr<blockit::Crypto> crypto)
         : store_(store), crypto_(crypto) {}
 
     // Create a new document
@@ -169,7 +169,7 @@ int main() {
 
     // Initialize the complete stack
     blockit::Blockit<Document> store;
-    auto crypto = std::make_shared<blockit::ledger::Crypto>("doc_system_key");
+    auto crypto = std::make_shared<blockit::Crypto>("doc_system_key");
 
     Document genesis("genesis", "Genesis Document", "System", "Initial document", "system");
 
@@ -218,10 +218,10 @@ int main() {
 
     // Create blockchain transactions and commit
     std::cout << "\n[*] Committing to blockchain...\n";
-    std::vector<blockit::ledger::Transaction<Document>> transactions;
+    std::vector<blockit::Transaction<Document>> transactions;
 
     for (const auto &doc : {doc1, doc2, doc3}) {
-        blockit::ledger::Transaction<Document> tx("tx_" + doc.id, doc, 100);
+        blockit::Transaction<Document> tx("tx_" + doc.id, doc, 100);
         tx.signTransaction(crypto);
         transactions.push_back(tx);
     }
@@ -245,7 +245,7 @@ int main() {
     // Commit the update
     auto updated_doc = doc_mgr.getDocument("DOC001");
     if (updated_doc) {
-        blockit::ledger::Transaction<Document> update_tx("tx_DOC001_v2", *updated_doc, 100);
+        blockit::Transaction<Document> update_tx("tx_DOC001_v2", *updated_doc, 100);
         update_tx.signTransaction(crypto);
         auto update_result = store.addBlock({update_tx});
         if (update_result.is_ok()) {

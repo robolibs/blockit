@@ -15,10 +15,10 @@ TEST_SUITE("Chain Tests") {
 
         chain::Chain<ChainTestData> blockchain("test-chain", "genesis-tx", ChainTestData{"init", "system"}, privateKey);
 
-        CHECK(blockchain.uuid_ == "test-chain");
+        CHECK(std::string(blockchain.uuid_.c_str()) == "test-chain");
         CHECK(blockchain.blocks_.size() == 1);
         CHECK(blockchain.blocks_[0].index_ == 0);
-        CHECK(blockchain.blocks_[0].previous_hash_ == "GENESIS");
+        CHECK(std::string(blockchain.blocks_[0].previous_hash_.c_str()) == "GENESIS");
         CHECK_FALSE(blockchain.blocks_[0].hash_.empty());
     }
 
@@ -36,7 +36,7 @@ TEST_SUITE("Chain Tests") {
 
         CHECK(blockchain.blocks_.size() == 2);
         CHECK(blockchain.blocks_[1].index_ == 1);
-        CHECK(blockchain.blocks_[1].previous_hash_ == blockchain.blocks_[0].hash_);
+        CHECK(std::string(blockchain.blocks_[1].previous_hash_.c_str()) == std::string(blockchain.blocks_[0].hash_.c_str()));
     }
 
     TEST_CASE("Chain validation") {
@@ -53,7 +53,9 @@ TEST_SUITE("Chain Tests") {
             blockchain.addBlock(block);
         }
 
-        CHECK(blockchain.isValid());
+        auto valid_result = blockchain.isValid();
+        CHECK(valid_result.is_ok());
+        CHECK(valid_result.value());
         CHECK(blockchain.blocks_.size() == 4); // Genesis + 3 added blocks
     }
 
@@ -78,11 +80,13 @@ TEST_SUITE("Chain Tests") {
         blockchain.grantCapability("sensor-001", "READ_DATA");
 
         // Update states
-        CHECK(blockchain.updateParticipantState("robot-001", "working"));
-        CHECK(blockchain.updateParticipantState("sensor-001", "active"));
+        CHECK(blockchain.updateParticipantState("robot-001", "working").is_ok());
+        CHECK(blockchain.updateParticipantState("sensor-001", "active").is_ok());
 
         // Check metadata
-        CHECK(blockchain.getParticipantMetadata("robot-001", "type") == "industrial");
+        auto meta_result = blockchain.getParticipantMetadata("robot-001", "type");
+        CHECK(meta_result.is_ok());
+        CHECK(meta_result.value() == "industrial");
     }
 
     TEST_CASE("Double-spend prevention in chain") {
@@ -118,7 +122,7 @@ TEST_SUITE("Chain Tests") {
         chain::Chain<ChainTestData> blockchain("integrity-chain", "genesis", ChainTestData{"start", "system"},
                                                privateKey);
 
-        std::string previousHash = blockchain.blocks_[0].hash_;
+        std::string previousHash(blockchain.blocks_[0].hash_.c_str());
 
         // Add blocks and verify hash linking
         for (int i = 1; i <= 5; i++) {
@@ -129,13 +133,15 @@ TEST_SUITE("Chain Tests") {
             blockchain.addBlock(block);
 
             // Verify current block links to previous
-            CHECK(blockchain.blocks_[i].previous_hash_ == previousHash);
+            CHECK(std::string(blockchain.blocks_[i].previous_hash_.c_str()) == previousHash);
             CHECK(blockchain.blocks_[i].index_ == i);
 
-            previousHash = blockchain.blocks_[i].hash_;
+            previousHash = std::string(blockchain.blocks_[i].hash_.c_str());
         }
 
-        CHECK(blockchain.isValid());
+        auto valid_result = blockchain.isValid();
+        CHECK(valid_result.is_ok());
+        CHECK(valid_result.value());
     }
 
     TEST_CASE("Chain with unauthorized participant actions") {
@@ -155,7 +161,7 @@ TEST_SUITE("Chain Tests") {
         CHECK(blockchain.blocks_.size() == 2);
 
         // But the action validation should fail
-        CHECK_FALSE(blockchain.validateAndRecordAction("hacker", "some_action", "action-001"));
+        CHECK_FALSE(blockchain.validateAndRecordAction("hacker", "some_action", "action-001").is_ok());
     }
 
     TEST_CASE("Chain action validation with capabilities") {
@@ -170,17 +176,17 @@ TEST_SUITE("Chain Tests") {
 
         // Valid action with required capability
         CHECK(blockchain.validateAndRecordAction("worker-001", "operate drilling machine", "action-001",
-                                                 "OPERATE_MACHINE"));
+                                                 "OPERATE_MACHINE").is_ok());
 
         // Valid action without capability requirement
-        CHECK(blockchain.validateAndRecordAction("worker-001", "status update", "action-002"));
+        CHECK(blockchain.validateAndRecordAction("worker-001", "status update", "action-002").is_ok());
 
         // Invalid action - missing capability
         CHECK_FALSE(
-            blockchain.validateAndRecordAction("worker-001", "emergency shutdown", "action-003", "EMERGENCY_STOP"));
+            blockchain.validateAndRecordAction("worker-001", "emergency shutdown", "action-003", "EMERGENCY_STOP").is_ok());
 
         // Invalid action - duplicate ID
         CHECK_FALSE(
-            blockchain.validateAndRecordAction("worker-001", "another operation", "action-001", "OPERATE_MACHINE"));
+            blockchain.validateAndRecordAction("worker-001", "another operation", "action-001", "OPERATE_MACHINE").is_ok());
     }
 }

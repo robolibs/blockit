@@ -16,7 +16,7 @@
 #include <memory>
 #include <vector>
 
-using namespace blockit::ledger;
+using namespace blockit;
 using namespace blockit::storage;
 using namespace datapod;
 

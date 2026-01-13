@@ -10,7 +10,8 @@ TEST_SUITE("Merkle Tree Tests") {
 
         CHECK(tree.isEmpty());
         CHECK(tree.getTransactionCount() == 0);
-        CHECK(tree.getRoot().empty());
+        auto root_result = tree.getRoot();
+        CHECK_FALSE(root_result.is_ok()); // Should fail for empty tree
     }
 
     TEST_CASE("Single transaction Merkle Tree") {
@@ -19,12 +20,17 @@ TEST_SUITE("Merkle Tree Tests") {
 
         CHECK_FALSE(tree.isEmpty());
         CHECK(tree.getTransactionCount() == 1);
-        CHECK_FALSE(tree.getRoot().empty());
+        auto root_result = tree.getRoot();
+        CHECK(root_result.is_ok());
+        CHECK_FALSE(root_result.value().empty());
 
         // Verify the transaction
-        auto proof = tree.getProof(0);
-        bool verified = tree.verifyProof("transaction_1", 0, proof);
-        CHECK(verified);
+        auto proof_result = tree.getProof(0);
+        REQUIRE(proof_result.is_ok());
+        auto proof = proof_result.value();
+        auto verify_result = tree.verifyProof("transaction_1", 0, proof);
+        CHECK(verify_result.is_ok());
+        CHECK(verify_result.value());
     }
 
     TEST_CASE("Multiple transactions Merkle Tree") {
@@ -32,13 +38,18 @@ TEST_SUITE("Merkle Tree Tests") {
         chain::MerkleTree tree(transactions);
 
         CHECK(tree.getTransactionCount() == 4);
-        CHECK_FALSE(tree.getRoot().empty());
+        auto root_result = tree.getRoot();
+        CHECK(root_result.is_ok());
+        CHECK_FALSE(root_result.value().empty());
 
         // Verify each transaction
         for (size_t i = 0; i < transactions.size(); i++) {
-            auto proof = tree.getProof(i);
-            bool verified = tree.verifyProof(transactions[i], i, proof);
-            CHECK(verified);
+            auto proof_result = tree.getProof(i);
+            REQUIRE(proof_result.is_ok());
+            auto proof = proof_result.value();
+            auto verify_result = tree.verifyProof(transactions[i], i, proof);
+            CHECK(verify_result.is_ok());
+            CHECK(verify_result.value());
         }
     }
 
@@ -47,13 +58,18 @@ TEST_SUITE("Merkle Tree Tests") {
         chain::MerkleTree tree(transactions);
 
         CHECK(tree.getTransactionCount() == 3);
-        CHECK_FALSE(tree.getRoot().empty());
+        auto root_result = tree.getRoot();
+        CHECK(root_result.is_ok());
+        CHECK_FALSE(root_result.value().empty());
 
         // Should handle odd number correctly
         for (size_t i = 0; i < transactions.size(); i++) {
-            auto proof = tree.getProof(i);
-            bool verified = tree.verifyProof(transactions[i], i, proof);
-            CHECK(verified);
+            auto proof_result = tree.getProof(i);
+            REQUIRE(proof_result.is_ok());
+            auto proof = proof_result.value();
+            auto verify_result = tree.verifyProof(transactions[i], i, proof);
+            CHECK(verify_result.is_ok());
+            CHECK(verify_result.value());
         }
     }
 
@@ -69,9 +85,12 @@ TEST_SUITE("Merkle Tree Tests") {
         // Test random transactions
         std::vector<size_t> test_indices = {0, 100, 500, 999};
         for (size_t idx : test_indices) {
-            auto proof = tree.getProof(idx);
-            bool verified = tree.verifyProof(large_set[idx], idx, proof);
-            CHECK(verified);
+            auto proof_result = tree.getProof(idx);
+            REQUIRE(proof_result.is_ok());
+            auto proof = proof_result.value();
+            auto verify_result = tree.verifyProof(large_set[idx], idx, proof);
+            CHECK(verify_result.is_ok());
+            CHECK(verify_result.value());
 
             // Proof size should be logarithmic (approximately log2(1000) ≈ 10)
             CHECK(proof.size() <= 15); // Allow some margin
@@ -83,15 +102,19 @@ TEST_SUITE("Merkle Tree Tests") {
         chain::MerkleTree tree(transactions);
 
         // Get valid proof for transaction 0
-        auto proof = tree.getProof(0);
+        auto proof_result = tree.getProof(0);
+        REQUIRE(proof_result.is_ok());
+        auto proof = proof_result.value();
 
         // Try to verify wrong transaction with this proof
-        bool verified = tree.verifyProof("wrong_transaction", 0, proof);
-        CHECK_FALSE(verified);
+        auto verify_wrong = tree.verifyProof("wrong_transaction", 0, proof);
+        CHECK(verify_wrong.is_ok());
+        CHECK_FALSE(verify_wrong.value());
 
         // Try to verify correct transaction with wrong index
-        verified = tree.verifyProof("tx_1", 1, proof);
-        CHECK_FALSE(verified);
+        auto verify_wrong_idx = tree.verifyProof("tx_1", 1, proof);
+        CHECK(verify_wrong_idx.is_ok());
+        CHECK_FALSE(verify_wrong_idx.value());
     }
 
     TEST_CASE("Merkle root changes with different transaction sets") {
@@ -101,7 +124,11 @@ TEST_SUITE("Merkle Tree Tests") {
         chain::MerkleTree tree1(set1);
         chain::MerkleTree tree2(set2);
 
-        CHECK(tree1.getRoot() != tree2.getRoot());
+        auto root1 = tree1.getRoot();
+        auto root2 = tree2.getRoot();
+        REQUIRE(root1.is_ok());
+        REQUIRE(root2.is_ok());
+        CHECK(root1.value() != root2.value());
     }
 
     TEST_CASE("Same transaction set produces same root") {
@@ -110,6 +137,10 @@ TEST_SUITE("Merkle Tree Tests") {
         chain::MerkleTree tree1(transactions);
         chain::MerkleTree tree2(transactions);
 
-        CHECK(tree1.getRoot() == tree2.getRoot());
+        auto root1 = tree1.getRoot();
+        auto root2 = tree2.getRoot();
+        REQUIRE(root1.is_ok());
+        REQUIRE(root2.is_ok());
+        CHECK(root1.value() == root2.value());
     }
 }

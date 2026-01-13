@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.15)
 # Project configuration
 # ==================================================================================================
 set(PROJECT_NAME blockit)
-set(PROJECT_VERSION "0.0.3")
+set(PROJECT_VERSION "0.0.4")
 
 # Dependencies formats:
 #   Git:    set(LIB_DEPS "name|https://github.com/org/repo.git|tag" ...)
@@ -12,8 +12,8 @@ set(PROJECT_VERSION "0.0.3")
 #   Pkg:    set(LIB_DEPS "pkg::name" ...)  # Uses pkg-config
 set(LIB_DEPS
     "echo|https://github.com/bresilla/echo.git|0.0.23"
-    "datapod|https://github.com/robolibs/datapod.git|0.0.34"
-    "keylock|https://github.com/bresilla/keylock.git|0.0.4"
+    "datapod|https://github.com/robolibs/datapod.git|0.0.36"
+    "keylock|https://github.com/bresilla/keylock.git|0.0.5"
     "pkg::libsodium"
 )
 set(EXAMPLE_DEPS

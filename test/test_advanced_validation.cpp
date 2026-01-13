@@ -24,7 +24,9 @@ TEST_SUITE("Advanced Validation Tests") {
         emptyTx.signTransaction(privateKey);
 
         // Should still be valid if properly signed
-        CHECK(emptyTx.isValid());
+        auto empty_valid = emptyTx.isValid();
+        CHECK(empty_valid.is_ok());
+        CHECK(empty_valid.value());
 
         // Test maximum size transaction
         std::string largeData(10000, 'A'); // 10KB of data
@@ -32,7 +34,9 @@ TEST_SUITE("Advanced Validation Tests") {
         chain::Transaction<ValidationTestData> largeTx("large-tx", largeData_struct, 255);
         largeTx.signTransaction(privateKey);
 
-        CHECK(largeTx.isValid());
+        auto large_valid = largeTx.isValid();
+        CHECK(large_valid.is_ok());
+        CHECK(large_valid.value());
         CHECK(largeTx.toString().length() > 10000);
 
         // Test boundary priority values
@@ -42,8 +46,12 @@ TEST_SUITE("Advanced Validation Tests") {
         minPriorityTx.signTransaction(privateKey);
         maxPriorityTx.signTransaction(privateKey);
 
-        CHECK(minPriorityTx.isValid());
-        CHECK(maxPriorityTx.isValid());
+        auto min_valid = minPriorityTx.isValid();
+        auto max_valid = maxPriorityTx.isValid();
+        CHECK(min_valid.is_ok());
+        CHECK(min_valid.value());
+        CHECK(max_valid.is_ok());
+        CHECK(max_valid.value());
         CHECK(minPriorityTx.priority_ == 0);
         CHECK(maxPriorityTx.priority_ == 255);
     }
@@ -63,13 +71,21 @@ TEST_SUITE("Advanced Validation Tests") {
 
         // Block with only valid transaction should work
         chain::Block<ValidationTestData> validBlock({validTx});
-        CHECK(validBlock.verifyTransaction(0));         // First transaction
-        CHECK_FALSE(validBlock.verifyTransaction(999)); // Index out of bounds
+        auto verify0 = validBlock.verifyTransaction(0);
+        CHECK(verify0.is_ok());
+        CHECK(verify0.value()); // First transaction
+
+        auto verify999 = validBlock.verifyTransaction(999);
+        CHECK_FALSE(verify999.is_ok()); // Index out of bounds should fail
 
         // Block with mixed valid/invalid transactions
         chain::Block<ValidationTestData> mixedBlock({validTx, unsignedTx});
-        CHECK(mixedBlock.verifyTransaction(0)); // First transaction
-        CHECK(mixedBlock.verifyTransaction(1)); // Second transaction (block contains it, even if invalid)
+        auto mixed0 = mixedBlock.verifyTransaction(0);
+        auto mixed1 = mixedBlock.verifyTransaction(1);
+        CHECK(mixed0.is_ok());
+        CHECK(mixed0.value()); // First transaction
+        CHECK(mixed1.is_ok());
+        CHECK(mixed1.value()); // Second transaction (block contains it, even if invalid)
 
         // Verify Merkle root still calculated correctly
         CHECK_FALSE(mixedBlock.merkle_root_.empty());
@@ -87,23 +103,31 @@ TEST_SUITE("Advanced Validation Tests") {
                 "valid-tx-" + std::to_string(i), ValidationTestData{"valid", "data_" + std::to_string(i), false}, 100);
             tx.signTransaction(privateKey);
             chain::Block<ValidationTestData> block({tx});
-            CHECK(blockchain.addBlock(block));
+            CHECK(blockchain.addBlock(block).is_ok());
         }
 
-        CHECK(blockchain.isChainValid());
+        auto chain_valid = blockchain.isChainValid();
+        CHECK(chain_valid.is_ok());
+        CHECK(chain_valid.value());
         CHECK(blockchain.getChainLength() == 4); // Genesis + 3 blocks
 
         // Simulate hash corruption by getting last block and modifying it
         // (This is for testing - in real implementation, blocks should be immutable)
-        auto lastBlock = blockchain.getLastBlock();
-        std::string originalHash = lastBlock.hash_;
+        auto lastBlock_result = blockchain.getLastBlock();
+        REQUIRE(lastBlock_result.is_ok());
+        auto lastBlock = lastBlock_result.value();
+        std::string originalHash(lastBlock.hash_.c_str());
 
         // Verify chain is still valid with original hash
-        CHECK(blockchain.isChainValid());
+        auto still_valid = blockchain.isChainValid();
+        CHECK(still_valid.is_ok());
+        CHECK(still_valid.value());
 
         // Test with empty hash (simulated corruption)
         // Note: This tests the validation logic, not actual corruption
-        CHECK(blockchain.isChainValid()); // Should remain valid as we haven't actually corrupted the stored chain
+        auto final_valid = blockchain.isChainValid();
+        CHECK(final_valid.is_ok());
+        CHECK(final_valid.value()); // Should remain valid as we haven't actually corrupted the stored chain
     }
 
     TEST_CASE("Authenticator validation and edge cases") {
@@ -143,16 +167,23 @@ TEST_SUITE("Advanced Validation Tests") {
         std::vector<std::string> singleItem = {"single_transaction"};
         chain::MerkleTree singleTree(singleItem);
 
-        CHECK_FALSE(singleTree.getRoot().empty());
+        auto root_result = singleTree.getRoot();
+        CHECK(root_result.is_ok());
+        CHECK_FALSE(root_result.value().empty());
 
         // Test proof generation and verification for single item
-        auto proof = singleTree.generateProof("single_transaction");
-        CHECK(singleTree.verifyProof("single_transaction", proof, singleTree.getRoot()));
+        auto proof_result = singleTree.getProof(0);
+        REQUIRE(proof_result.is_ok());
+        auto proof = proof_result.value();
+        auto verify_single = singleTree.verifyProof("single_transaction", 0, proof);
+        CHECK(verify_single.is_ok());
+        CHECK(verify_single.value());
 
         // Test with empty list
         std::vector<std::string> emptyList;
         chain::MerkleTree emptyTree(emptyList);
-        CHECK(emptyTree.getRoot().empty()); // Empty tree should have empty root
+        auto empty_root = emptyTree.getRoot();
+        CHECK_FALSE(empty_root.is_ok()); // Empty tree should fail to get root
 
         // Test with large number of transactions
         std::vector<std::string> largeTxList;
@@ -161,20 +192,38 @@ TEST_SUITE("Advanced Validation Tests") {
         }
 
         chain::MerkleTree largeTree(largeTxList);
-        CHECK_FALSE(largeTree.getRoot().empty());
+        auto large_root = largeTree.getRoot();
+        CHECK(large_root.is_ok());
+        CHECK_FALSE(large_root.value().empty());
 
         // Verify proofs for random transactions in large tree
-        auto proof_0 = largeTree.generateProof("tx_0");
-        auto proof_999 = largeTree.generateProof("tx_999");
-        auto proof_500 = largeTree.generateProof("tx_500");
+        auto proof_0_result = largeTree.getProof(0);
+        auto proof_999_result = largeTree.getProof(999);
+        auto proof_500_result = largeTree.getProof(500);
 
-        CHECK(largeTree.verifyProof("tx_0", proof_0, largeTree.getRoot()));
-        CHECK(largeTree.verifyProof("tx_999", proof_999, largeTree.getRoot()));
-        CHECK(largeTree.verifyProof("tx_500", proof_500, largeTree.getRoot()));
+        REQUIRE(proof_0_result.is_ok());
+        REQUIRE(proof_999_result.is_ok());
+        REQUIRE(proof_500_result.is_ok());
+
+        auto proof_0 = proof_0_result.value();
+        auto proof_999 = proof_999_result.value();
+        auto proof_500 = proof_500_result.value();
+
+        auto verify_0 = largeTree.verifyProof("tx_0", 0, proof_0);
+        auto verify_999 = largeTree.verifyProof("tx_999", 999, proof_999);
+        auto verify_500 = largeTree.verifyProof("tx_500", 500, proof_500);
+
+        CHECK(verify_0.is_ok());
+        CHECK(verify_0.value());
+        CHECK(verify_999.is_ok());
+        CHECK(verify_999.value());
+        CHECK(verify_500.is_ok());
+        CHECK(verify_500.value());
 
         // Test invalid proof verification
-        CHECK_FALSE(largeTree.verifyProof("tx_0", proof_999, largeTree.getRoot()));
-        CHECK_FALSE(largeTree.verifyProof("nonexistent", proof_0, largeTree.getRoot()));
+        auto verify_wrong = largeTree.verifyProof("tx_0", 999, proof_999);
+        CHECK(verify_wrong.is_ok());
+        CHECK_FALSE(verify_wrong.value());
     }
 
     TEST_CASE("Double-spend prevention stress test") {
@@ -197,18 +246,20 @@ TEST_SUITE("Advanced Validation Tests") {
 
         // First transaction should succeed
         chain::Block<ValidationTestData> block1({tx1});
-        CHECK(blockchain.addBlock(block1));
+        CHECK(blockchain.addBlock(block1).is_ok());
         CHECK(blockchain.isTransactionUsed(duplicateTxId));
 
         // Subsequent blocks with same transaction ID should be rejected
         chain::Block<ValidationTestData> block2({tx2});
         chain::Block<ValidationTestData> block3({tx3});
 
-        CHECK_FALSE(blockchain.addBlock(block2));
-        CHECK_FALSE(blockchain.addBlock(block3));
+        CHECK_FALSE(blockchain.addBlock(block2).is_ok());
+        CHECK_FALSE(blockchain.addBlock(block3).is_ok());
 
         // Chain should remain valid and unchanged
-        CHECK(blockchain.isChainValid());
+        auto valid = blockchain.isChainValid();
+        CHECK(valid.is_ok());
+        CHECK(valid.value());
         CHECK(blockchain.getChainLength() == 2); // Genesis + block1 only
     }
 
@@ -234,11 +285,13 @@ TEST_SUITE("Advanced Validation Tests") {
             }
 
             chain::Block<ValidationTestData> block(blockTxs);
-            CHECK(blockchain.addBlock(block));
+            CHECK(blockchain.addBlock(block).is_ok());
         }
 
         // Verify final chain state
-        CHECK(blockchain.isChainValid());
+        auto final_valid = blockchain.isChainValid();
+        CHECK(final_valid.is_ok());
+        CHECK(final_valid.value());
         CHECK(blockchain.getChainLength() == txCounts.size() + 1); // +1 for genesis
 
         // Verify all non-empty transactions are tracked

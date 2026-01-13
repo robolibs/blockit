@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.0.4] - 2026-01-13
+
+### <!-- 0 -->⛰️  Features
+
+- Add W3C Decentralized Identifiers (DID) support
+- Implement Proof-of-Authority consensus and validator storage
+- Implement Proof-of-Authority (PoA) consensus mechanism
+- Migrate to datapod for binary serialization
+
+### <!-- 2 -->🚜 Refactor
+
+- Simplify namespace usage and error handling
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Update README for documentation and build improvements
+
 ## [0.0.3] - 2026-01-12
 
 ### <!-- 0 -->⛰️  Features

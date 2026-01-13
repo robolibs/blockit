@@ -69,7 +69,8 @@ void demonstrateTransaction() {
     std::cout << "Signature length: " << tx1.signature_.size() << " bytes" << std::endl;
 
     // Validate the transaction
-    std::cout << "Transaction is valid: " << (tx1.isValid() ? "YES" : "NO") << std::endl;
+    auto tx1_valid = tx1.isValid();
+    std::cout << "Transaction is valid: " << (tx1_valid.is_ok() && tx1_valid.value() ? "YES" : "NO") << std::endl;
 
     // Create another transaction with different priority
     chain::Transaction<StringWrapper> tx2("tx-002", StringWrapper("smart_contract_call"), 200);
@@ -111,11 +112,13 @@ void demonstrateBlock() {
     std::cout << "Timestamp: " << block.timestamp_.sec << "." << block.timestamp_.nanosec << std::endl;
 
     // Validate the block
-    std::cout << "Block is valid: " << (block.isValid() ? "YES" : "NO") << std::endl;
+    auto block_valid = block.isValid();
+    std::cout << "Block is valid: " << (block_valid.is_ok() && block_valid.value() ? "YES" : "NO") << std::endl;
 
     // Demonstrate hash calculation
-    std::string calculatedHash = block.calculateHash();
-    std::cout << "Calculated hash matches stored hash: " << (calculatedHash == block.hash_ ? "YES" : "NO") << std::endl;
+    auto hash_result = block.calculateHash();
+    std::string calculatedHash = hash_result.is_ok() ? hash_result.value() : "";
+    std::cout << "Calculated hash matches stored hash: " << (calculatedHash == std::string(block.hash_.c_str()) ? "YES" : "NO") << std::endl;
 }
 
 void demonstrateChain() {
@@ -158,14 +161,15 @@ void demonstrateChain() {
 
     std::cout << "\nFinal blockchain state:" << std::endl;
     std::cout << "Total blocks: " << blockchain.blocks_.size() << std::endl;
-    std::cout << "Blockchain is valid: " << (blockchain.isValid() ? "YES" : "NO") << std::endl;
+    auto chain_valid = blockchain.isValid();
+    std::cout << "Blockchain is valid: " << (chain_valid.is_ok() && chain_valid.value() ? "YES" : "NO") << std::endl;
 
     // Display chain summary
     std::cout << "\nBlockchain Summary:" << std::endl;
     for (size_t i = 0; i < blockchain.blocks_.size(); i++) {
         const auto &block = blockchain.blocks_[i];
         std::cout << "Block " << i << ": " << block.transactions_.size()
-                  << " transactions, hash: " << block.hash_.substr(0, 16) << "..." << std::endl;
+                  << " transactions, hash: " << std::string(block.hash_.c_str()).substr(0, 16) << "..." << std::endl;
     }
 }
 
@@ -176,7 +180,12 @@ void demonstrateCryptography() {
     auto crypto = std::make_shared<chain::Crypto>("test_key");
 
     // Get public key in PEM format
-    std::string publicKeyPEM = crypto->getPublicHalf();
+    auto pubkey_result = crypto->getPublicHalf();
+    if (!pubkey_result.is_ok()) {
+        std::cout << "Failed to get public key!" << std::endl;
+        return;
+    }
+    std::string publicKeyPEM = pubkey_result.value();
     std::cout << "Generated keypair successfully!" << std::endl;
     std::cout << "Public key (PEM format):" << std::endl;
     std::cout << publicKeyPEM << std::endl;
@@ -187,17 +196,24 @@ void demonstrateCryptography() {
 
     try {
         // Sign the message
-        auto signature = crypto->sign(testMessage);
+        auto sign_result = crypto->sign(testMessage);
+        if (!sign_result.is_ok()) {
+            std::cout << "Signing failed!" << std::endl;
+            return;
+        }
+        auto signature = sign_result.value();
         std::cout << "Message signed successfully!" << std::endl;
         std::cout << "Signature length: " << signature.size() << " bytes" << std::endl;
 
         // Verify the signature
-        bool isValid = chain::verify(publicKeyPEM, testMessage, signature);
+        auto verify_result = chain::verify(publicKeyPEM, testMessage, signature);
+        bool isValid = verify_result.is_ok() && verify_result.value();
         std::cout << "Signature verification: " << (isValid ? "VALID" : "INVALID") << std::endl;
 
         // Test with wrong message
         std::string wrongMessage = "Hello, Blockchain World!!";
-        bool isInvalid = chain::verify(publicKeyPEM, wrongMessage, signature);
+        auto verify_wrong = chain::verify(publicKeyPEM, wrongMessage, signature);
+        bool isInvalid = verify_wrong.is_ok() && verify_wrong.value();
         std::cout << "Wrong message verification: " << (isInvalid ? "VALID" : "INVALID") << " (should be INVALID)"
                   << std::endl;
 
@@ -252,8 +268,10 @@ void demonstrateAdvancedScenarios() {
 
     std::cout << "  Main chain blocks: " << chain1.blocks_.size() << std::endl;
     std::cout << "  Test chain blocks: " << chain2.blocks_.size() << std::endl;
-    std::cout << "  Main chain valid: " << (chain1.isValid() ? "YES" : "NO") << std::endl;
-    std::cout << "  Test chain valid: " << (chain2.isValid() ? "YES" : "NO") << std::endl;
+    auto main_valid = chain1.isValid();
+    auto test_valid = chain2.isValid();
+    std::cout << "  Main chain valid: " << (main_valid.is_ok() && main_valid.value() ? "YES" : "NO") << std::endl;
+    std::cout << "  Test chain valid: " << (test_valid.is_ok() && test_valid.value() ? "YES" : "NO") << std::endl;
 }
 
 void demonstratePersistentStorage() {
@@ -292,25 +310,34 @@ void demonstratePersistentStorage() {
     // Demonstrate serialization
     std::cout << "\n--- Serialization Test ---" << std::endl;
     try {
-        std::string serialized = originalChain.serialize();
+        dp::ByteBuf serialized = originalChain.serialize();
         std::cout << "Blockchain serialized successfully!" << std::endl;
-        std::cout << "Serialized data size: " << serialized.length() << " bytes" << std::endl;
+        std::cout << "Serialized data size: " << serialized.size() << " bytes" << std::endl;
 
-        // Show a snippet of the serialized data
-        std::cout << "Serialized data preview (first 200 chars):" << std::endl;
-        std::cout << serialized.substr(0, 200) << "..." << std::endl;
+        // Show a snippet of the serialized data (as hex)
+        std::cout << "Serialized data preview (first 50 bytes in hex):" << std::endl;
+        for (size_t i = 0; i < std::min(serialized.size(), size_t(50)); ++i) {
+            std::cout << std::hex << std::setw(2) << std::setfill('0') << (int)serialized[i];
+        }
+        std::cout << std::dec << "..." << std::endl;
 
         // Demonstrate deserialization
         std::cout << "\n--- Deserialization Test ---" << std::endl;
-        chain::Chain<StringWrapper> deserializedChain = chain::Chain<StringWrapper>::deserialize(serialized);
+        auto deser_result = chain::Chain<StringWrapper>::deserialize(serialized);
+        if (!deser_result.is_ok()) {
+            std::cout << "Deserialization failed!" << std::endl;
+            return;
+        }
+        chain::Chain<StringWrapper> deserializedChain = std::move(deser_result.value());
 
         std::cout << "Blockchain deserialized successfully!" << std::endl;
         std::cout << "Deserialized chain UUID: " << deserializedChain.uuid_ << std::endl;
         std::cout << "Deserialized chain blocks: " << deserializedChain.blocks_.size() << std::endl;
-        std::cout << "Deserialized chain valid: " << (deserializedChain.isValid() ? "YES" : "NO") << std::endl;
+        auto deser_valid = deserializedChain.isValid();
+        std::cout << "Deserialized chain valid: " << (deser_valid.is_ok() && deser_valid.value() ? "YES" : "NO") << std::endl;
 
         // Verify data integrity
-        bool integrity_check = (originalChain.uuid_ == deserializedChain.uuid_ &&
+        bool integrity_check = (std::string(originalChain.uuid_.c_str()) == std::string(deserializedChain.uuid_.c_str()) &&
                                 originalChain.blocks_.size() == deserializedChain.blocks_.size());
         std::cout << "Data integrity check: " << (integrity_check ? "PASSED" : "FAILED") << std::endl;
 
@@ -324,22 +351,25 @@ void demonstratePersistentStorage() {
 
     try {
         // Save to file
-        bool save_success = originalChain.saveToFile(filename);
+        auto save_result = originalChain.saveToFile(filename);
+        bool save_success = save_result.is_ok();
         std::cout << "Save to file: " << (save_success ? "SUCCESS" : "FAILED") << std::endl;
 
         if (save_success) {
             // Load from file
             chain::Chain<StringWrapper> loadedChain;
-            bool load_success = loadedChain.loadFromFile(filename);
+            auto load_result = loadedChain.loadFromFile(filename);
+            bool load_success = load_result.is_ok();
             std::cout << "Load from file: " << (load_success ? "SUCCESS" : "FAILED") << std::endl;
 
             if (load_success) {
                 std::cout << "Loaded chain UUID: " << loadedChain.uuid_ << std::endl;
                 std::cout << "Loaded chain blocks: " << loadedChain.blocks_.size() << std::endl;
-                std::cout << "Loaded chain valid: " << (loadedChain.isValid() ? "YES" : "NO") << std::endl;
+                auto loaded_valid = loadedChain.isValid();
+                std::cout << "Loaded chain valid: " << (loaded_valid.is_ok() && loaded_valid.value() ? "YES" : "NO") << std::endl;
 
                 // Verify file persistence integrity
-                bool file_integrity = (originalChain.uuid_ == loadedChain.uuid_ &&
+                bool file_integrity = (std::string(originalChain.uuid_.c_str()) == std::string(loadedChain.uuid_.c_str()) &&
                                        originalChain.blocks_.size() == loadedChain.blocks_.size());
                 std::cout << "File persistence integrity: " << (file_integrity ? "PASSED" : "FAILED") << std::endl;
             }
