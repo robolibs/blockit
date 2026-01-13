@@ -1,5 +1,9 @@
 #pragma once
 
+#include <blockit/identity/credential_issuer.hpp>
+#include <blockit/identity/credential_status.hpp>
+#include <blockit/identity/did_registry.hpp>
+#include <blockit/identity/verifiable_credential.hpp>
 #include <blockit/ledger/block.hpp>
 #include <blockit/ledger/chain.hpp>
 #include <blockit/ledger/poa.hpp>
@@ -156,6 +160,74 @@ namespace blockit {
 
         /// Get active validator count
         size_t getActiveValidatorCount() const;
+
+        // ===========================================
+        // DID Support
+        // ===========================================
+
+        /// Initialize DID support for the chain
+        void initializeDID();
+
+        /// Check if DID support is enabled
+        bool hasDID() const;
+
+        /// Get DID registry
+        DIDRegistry *getDIDRegistry();
+        const DIDRegistry *getDIDRegistry() const;
+
+        /// Get credential status list
+        CredentialStatusList *getCredentialStatusList();
+        const CredentialStatusList *getCredentialStatusList() const;
+
+        /// Create a DID for a new identity
+        /// @param key The key pair for the new identity
+        /// @return Result with pair of (DIDDocument, DIDOperation) on success
+        Result<std::pair<DIDDocument, DIDOperation>, Error> createDID(const Key &key);
+
+        /// Resolve a DID to its document
+        /// @param did The DID to resolve
+        /// @return Result with DIDDocument on success
+        Result<DIDDocument, Error> resolveDID(const DID &did) const;
+
+        /// Resolve a DID string to its document
+        Result<DIDDocument, Error> resolveDID(const std::string &did_string) const;
+
+        /// Create a robot identity with DID and authorization credential
+        /// @param robot_key The robot's key pair
+        /// @param robot_id Unique robot identifier (e.g., "ROBOT_007")
+        /// @param capabilities List of robot capabilities
+        /// @param issuer_key Key of the credential issuer
+        /// @return Result with pair of (DIDDocument, VerifiableCredential) on success
+        Result<std::pair<DIDDocument, VerifiableCredential>, Error>
+        createRobotIdentity(const Key &robot_key, const std::string &robot_id,
+                            const std::vector<std::string> &capabilities, const Key &issuer_key);
+
+        /// Issue a credential using the built-in credential issuer
+        /// @param issuer_key Issuer's key pair
+        /// @param subject_did Subject's DID
+        /// @param type Credential type
+        /// @param claims Map of claim key-value pairs
+        /// @param validity_duration How long the credential is valid (0 = no expiration)
+        /// @return Result with VerifiableCredential on success
+        Result<VerifiableCredential, Error>
+        issueCredential(const Key &issuer_key, const DID &subject_did, CredentialType type,
+                        const std::map<std::string, std::string> &claims,
+                        std::chrono::milliseconds validity_duration = std::chrono::milliseconds(0));
+
+        /// Store a DID document in the file store
+        /// @param doc The DID document to store
+        /// @return Result indicating success or error
+        Result<void, Error> storeDIDDocument(const DIDDocument &doc);
+
+        /// Store a credential in the file store
+        /// @param credential The credential to store
+        /// @return Result indicating success or error
+        Result<void, Error> storeCredential(const VerifiableCredential &credential);
+
+        /// Load a credential from the file store
+        /// @param credential_id The credential ID
+        /// @return Optional with VerifiableCredential if found
+        Optional<VerifiableCredential> loadCredential(const std::string &credential_id);
 
       private:
         Chain<T> chain_;
@@ -508,6 +580,317 @@ namespace blockit {
     template <typename T> size_t Blockit<T>::getActiveValidatorCount() const {
         std::shared_lock lock(mutex_);
         return chain_.getActiveValidatorCount();
+    }
+
+    // ===========================================
+    // DID Implementation
+    // ===========================================
+
+    template <typename T> void Blockit<T>::initializeDID() {
+        std::unique_lock lock(mutex_);
+        chain_.initializeDID();
+    }
+
+    template <typename T> bool Blockit<T>::hasDID() const {
+        std::shared_lock lock(mutex_);
+        return chain_.hasDID();
+    }
+
+    template <typename T> DIDRegistry *Blockit<T>::getDIDRegistry() {
+        std::shared_lock lock(mutex_);
+        return chain_.getDIDRegistry();
+    }
+
+    template <typename T> const DIDRegistry *Blockit<T>::getDIDRegistry() const {
+        std::shared_lock lock(mutex_);
+        return chain_.getDIDRegistry();
+    }
+
+    template <typename T> CredentialStatusList *Blockit<T>::getCredentialStatusList() {
+        std::shared_lock lock(mutex_);
+        return chain_.getCredentialStatusList();
+    }
+
+    template <typename T> const CredentialStatusList *Blockit<T>::getCredentialStatusList() const {
+        std::shared_lock lock(mutex_);
+        return chain_.getCredentialStatusList();
+    }
+
+    template <typename T> Result<std::pair<DIDDocument, DIDOperation>, Error> Blockit<T>::createDID(const Key &key) {
+        std::unique_lock lock(mutex_);
+        if (!initialized_)
+            return Result<std::pair<DIDDocument, DIDOperation>, Error>::err(
+                Error::invalid_argument("Store not initialized"));
+
+        if (!chain_.hasDID())
+            return Result<std::pair<DIDDocument, DIDOperation>, Error>::err(
+                Error::invalid_argument("DID support not initialized"));
+
+        auto registry = chain_.getDIDRegistry();
+        auto result = registry->create(key);
+        if (!result.is_ok()) {
+            return Result<std::pair<DIDDocument, DIDOperation>, Error>::err(result.error());
+        }
+
+        // Store the DID document in FileStore
+        const auto &[doc, op] = result.value();
+        auto doc_bytes = doc.serialize();
+
+        storage::DIDRecord record;
+        record.did = String(doc.getId().toString().c_str());
+        record.document = Vector<u8>(doc_bytes.begin(), doc_bytes.end());
+        record.version = 1;
+        auto now =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        record.created_at = now;
+        record.updated_at = now;
+        record.status = 0; // Active
+
+        auto tx = store_.beginTransaction();
+        auto store_result = store_.storeDID(record);
+        if (!store_result.is_ok()) {
+            return Result<std::pair<DIDDocument, DIDOperation>, Error>::err(store_result.error());
+        }
+        tx->commit();
+
+        return Result<std::pair<DIDDocument, DIDOperation>, Error>::ok(result.value());
+    }
+
+    template <typename T> Result<DIDDocument, Error> Blockit<T>::resolveDID(const DID &did) const {
+        std::shared_lock lock(mutex_);
+        if (!initialized_)
+            return Result<DIDDocument, Error>::err(Error::invalid_argument("Store not initialized"));
+
+        if (!chain_.hasDID())
+            return Result<DIDDocument, Error>::err(Error::invalid_argument("DID support not initialized"));
+
+        return chain_.getDIDRegistry()->resolve(did);
+    }
+
+    template <typename T> Result<DIDDocument, Error> Blockit<T>::resolveDID(const std::string &did_string) const {
+        std::shared_lock lock(mutex_);
+        if (!initialized_)
+            return Result<DIDDocument, Error>::err(Error::invalid_argument("Store not initialized"));
+
+        if (!chain_.hasDID())
+            return Result<DIDDocument, Error>::err(Error::invalid_argument("DID support not initialized"));
+
+        return chain_.getDIDRegistry()->resolve(did_string);
+    }
+
+    template <typename T>
+    Result<std::pair<DIDDocument, VerifiableCredential>, Error>
+    Blockit<T>::createRobotIdentity(const Key &robot_key, const std::string &robot_id,
+                                    const std::vector<std::string> &capabilities, const Key &issuer_key) {
+        std::unique_lock lock(mutex_);
+        if (!initialized_)
+            return Result<std::pair<DIDDocument, VerifiableCredential>, Error>::err(
+                Error::invalid_argument("Store not initialized"));
+
+        if (!chain_.hasDID())
+            return Result<std::pair<DIDDocument, VerifiableCredential>, Error>::err(
+                Error::invalid_argument("DID support not initialized"));
+
+        auto registry = chain_.getDIDRegistry();
+        auto status_list = chain_.getCredentialStatusList();
+
+        // Create DID for the robot
+        auto did_result = registry->create(robot_key);
+        if (!did_result.is_ok()) {
+            return Result<std::pair<DIDDocument, VerifiableCredential>, Error>::err(did_result.error());
+        }
+
+        const auto &[robot_doc, did_op] = did_result.value();
+        auto robot_did = robot_doc.getId();
+
+        // Create issuer DID and CredentialIssuer
+        auto issuer_did = DID::fromKey(issuer_key);
+
+        // Ensure issuer DID exists in registry
+        if (!registry->exists(issuer_did)) {
+            auto issuer_did_result = registry->create(issuer_key);
+            if (!issuer_did_result.is_ok()) {
+                return Result<std::pair<DIDDocument, VerifiableCredential>, Error>::err(issuer_did_result.error());
+            }
+        }
+
+        CredentialIssuer issuer(issuer_did, issuer_key);
+
+        // Issue robot authorization credential
+        auto cred_result = issuer.issueRobotAuthorization(robot_did, robot_id, capabilities);
+        if (!cred_result.is_ok()) {
+            return Result<std::pair<DIDDocument, VerifiableCredential>, Error>::err(cred_result.error());
+        }
+
+        auto credential = cred_result.value();
+
+        // Record credential in status list
+        status_list->recordIssue(credential.getId(), issuer_did.toString());
+
+        // Store robot DID in FileStore
+        auto robot_doc_bytes = robot_doc.serialize();
+        storage::DIDRecord robot_record;
+        robot_record.did = String(robot_did.toString().c_str());
+        robot_record.document = Vector<u8>(robot_doc_bytes.begin(), robot_doc_bytes.end());
+        robot_record.version = 1;
+        auto now =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        robot_record.created_at = now;
+        robot_record.updated_at = now;
+        robot_record.status = 0;
+
+        auto tx = store_.beginTransaction();
+        auto store_did_result = store_.storeDID(robot_record);
+        if (!store_did_result.is_ok()) {
+            return Result<std::pair<DIDDocument, VerifiableCredential>, Error>::err(store_did_result.error());
+        }
+
+        // Store credential in FileStore
+        auto cred_bytes = credential.serialize();
+        storage::CredentialRecord cred_record;
+        cred_record.credential_id = String(credential.getId().c_str());
+        cred_record.issuer_did = String(issuer_did.toString().c_str());
+        cred_record.subject_did = String(robot_did.toString().c_str());
+        cred_record.credential = Vector<u8>(cred_bytes.begin(), cred_bytes.end());
+        cred_record.status = 0;
+        cred_record.issued_at = now;
+        cred_record.expires_at = credential.getExpirationDate();
+
+        auto store_cred_result = store_.storeCredential(cred_record);
+        if (!store_cred_result.is_ok()) {
+            return Result<std::pair<DIDDocument, VerifiableCredential>, Error>::err(store_cred_result.error());
+        }
+
+        tx->commit();
+
+        return Result<std::pair<DIDDocument, VerifiableCredential>, Error>::ok({robot_doc, credential});
+    }
+
+    template <typename T>
+    Result<VerifiableCredential, Error> Blockit<T>::issueCredential(const Key &issuer_key, const DID &subject_did,
+                                                                    CredentialType type,
+                                                                    const std::map<std::string, std::string> &claims,
+                                                                    std::chrono::milliseconds validity_duration) {
+        std::unique_lock lock(mutex_);
+        if (!initialized_)
+            return Result<VerifiableCredential, Error>::err(Error::invalid_argument("Store not initialized"));
+
+        if (!chain_.hasDID())
+            return Result<VerifiableCredential, Error>::err(Error::invalid_argument("DID support not initialized"));
+
+        auto status_list = chain_.getCredentialStatusList();
+        auto issuer_did = DID::fromKey(issuer_key);
+
+        CredentialIssuer issuer(issuer_did, issuer_key);
+
+        auto cred_result = issuer.issueCustomCredential(subject_did, type, claims, validity_duration);
+        if (!cred_result.is_ok()) {
+            return Result<VerifiableCredential, Error>::err(cred_result.error());
+        }
+
+        auto credential = cred_result.value();
+
+        // Record in status list
+        status_list->recordIssue(credential.getId(), issuer_did.toString());
+
+        // Store in FileStore
+        auto cred_bytes = credential.serialize();
+        storage::CredentialRecord cred_record;
+        cred_record.credential_id = String(credential.getId().c_str());
+        cred_record.issuer_did = String(issuer_did.toString().c_str());
+        cred_record.subject_did = String(subject_did.toString().c_str());
+        cred_record.credential = Vector<u8>(cred_bytes.begin(), cred_bytes.end());
+        cred_record.status = 0;
+        auto now =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        cred_record.issued_at = now;
+        cred_record.expires_at = credential.getExpirationDate();
+
+        auto tx = store_.beginTransaction();
+        auto store_result = store_.storeCredential(cred_record);
+        if (!store_result.is_ok()) {
+            return Result<VerifiableCredential, Error>::err(store_result.error());
+        }
+        tx->commit();
+
+        return Result<VerifiableCredential, Error>::ok(credential);
+    }
+
+    template <typename T> Result<void, Error> Blockit<T>::storeDIDDocument(const DIDDocument &doc) {
+        std::unique_lock lock(mutex_);
+        if (!initialized_)
+            return Result<void, Error>::err(Error::invalid_argument("Store not initialized"));
+
+        auto doc_bytes = doc.serialize();
+        storage::DIDRecord record;
+        record.did = String(doc.getId().toString().c_str());
+        record.document = Vector<u8>(doc_bytes.begin(), doc_bytes.end());
+        record.version = 1;
+        auto now =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        record.created_at = now;
+        record.updated_at = now;
+        record.status = doc.isActive() ? static_cast<u8>(0) : static_cast<u8>(1);
+
+        auto tx = store_.beginTransaction();
+        auto result = store_.storeDID(record);
+        if (!result.is_ok()) {
+            return result;
+        }
+        tx->commit();
+        return Result<void, Error>::ok();
+    }
+
+    template <typename T> Result<void, Error> Blockit<T>::storeCredential(const VerifiableCredential &credential) {
+        std::unique_lock lock(mutex_);
+        if (!initialized_)
+            return Result<void, Error>::err(Error::invalid_argument("Store not initialized"));
+
+        auto cred_bytes = credential.serialize();
+        storage::CredentialRecord record;
+        record.credential_id = String(credential.getId().c_str());
+        record.issuer_did = String(credential.getIssuerString().c_str());
+        record.subject_did = String(credential.getSubjectDID().toString().c_str());
+        record.credential = Vector<u8>(cred_bytes.begin(), cred_bytes.end());
+        record.status = 0; // Active
+        auto now =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        record.issued_at = now;
+        record.expires_at = credential.getExpirationDate();
+
+        auto tx = store_.beginTransaction();
+        auto result = store_.storeCredential(record);
+        if (!result.is_ok()) {
+            return result;
+        }
+        tx->commit();
+        return Result<void, Error>::ok();
+    }
+
+    template <typename T> Optional<VerifiableCredential> Blockit<T>::loadCredential(const std::string &credential_id) {
+        std::shared_lock lock(mutex_);
+        if (!initialized_)
+            return Optional<VerifiableCredential>();
+
+        auto record = store_.loadCredential(String(credential_id.c_str()));
+        if (!record.has_value()) {
+            return Optional<VerifiableCredential>();
+        }
+
+        // Deserialize the credential
+        std::vector<uint8_t> cred_data(record->credential.begin(), record->credential.end());
+        ByteBuf buf(cred_data.begin(), cred_data.end());
+        auto result = VerifiableCredential::deserialize(buf);
+        if (!result.is_ok()) {
+            return Optional<VerifiableCredential>();
+        }
+
+        return Optional<VerifiableCredential>(result.value());
     }
 
 } // namespace blockit

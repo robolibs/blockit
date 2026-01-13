@@ -10,6 +10,12 @@
 #include "block.hpp"
 #include "poa.hpp"
 
+// Forward declaration for DID support
+namespace blockit {
+    class DIDRegistry;
+    class CredentialStatusList;
+} // namespace blockit
+
 namespace blockit {
 
     using namespace std::chrono;
@@ -23,7 +29,9 @@ namespace blockit {
 
       private:
         mutable std::shared_mutex mutex_;
-        std::unique_ptr<PoAConsensus> poa_; // Optional PoA consensus
+        std::unique_ptr<PoAConsensus> poa_;                            // Optional PoA consensus
+        std::unique_ptr<DIDRegistry> did_registry_;                    // Optional DID registry
+        std::unique_ptr<CredentialStatusList> credential_status_list_; // Optional credential status
 
       public:
         Chain() = default;
@@ -490,6 +498,47 @@ namespace blockit {
             }
 
             return dp::Result<bool, dp::Error>::ok(add_result.value()); // Returns true if quorum reached
+        }
+
+        // ===========================================
+        // DID Support
+        // ===========================================
+
+        /// Initialize DID registry for this chain
+        inline void initializeDID() {
+            std::unique_lock lock(mutex_);
+            did_registry_ = std::make_unique<DIDRegistry>();
+            credential_status_list_ = std::make_unique<CredentialStatusList>();
+        }
+
+        /// Check if DID support is enabled
+        inline bool hasDID() const {
+            std::shared_lock lock(mutex_);
+            return did_registry_ != nullptr;
+        }
+
+        /// Get DID registry (for direct access)
+        inline DIDRegistry *getDIDRegistry() {
+            std::shared_lock lock(mutex_);
+            return did_registry_.get();
+        }
+
+        /// Get DID registry (const)
+        inline const DIDRegistry *getDIDRegistry() const {
+            std::shared_lock lock(mutex_);
+            return did_registry_.get();
+        }
+
+        /// Get credential status list
+        inline CredentialStatusList *getCredentialStatusList() {
+            std::shared_lock lock(mutex_);
+            return credential_status_list_.get();
+        }
+
+        /// Get credential status list (const)
+        inline const CredentialStatusList *getCredentialStatusList() const {
+            std::shared_lock lock(mutex_);
+            return credential_status_list_.get();
         }
 
         // Serialize to binary using datapod
