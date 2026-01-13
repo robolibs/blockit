@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.0.5] - 2026-01-13
+
+### <!-- 0 -->⛰️  Features
+
+- Refactor Ledger Key and introduce Ledger namespace
+
+### <!-- 3 -->📚 Documentation
+
+- Document DID, Ledger, and Storage modules
+
 ## [0.0.4] - 2026-01-13
 
 ### <!-- 0 -->⛰️  Features
