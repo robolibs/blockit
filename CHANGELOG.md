@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.0.6] - 2026-01-13
+
+### <!-- 1 -->🐛 Bug Fixes
+
+- Update Git URL for keylock dependency
+
 ## [0.0.5] - 2026-01-13
 
 ### <!-- 0 -->⛰️  Features
