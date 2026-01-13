@@ -12,7 +12,7 @@ See [TODO.md](./TODO.md) for the complete development plan and current progress.
 
 Blockit is a comprehensive blockchain framework designed for robot swarms requiring decentralized trust without central coordination. Built on Proof-of-Authority (PoA) consensus, it enables autonomous robots to establish trust, share verified state, and coordinate actions through cryptographically secured consensus.
 
-The library provides a complete blockchain implementation with generic templated types, allowing robot state, sensor data, commands, and any data structure to be stored on-chain. It combines cryptographic security through Ed25519 signatures with practical features like content anchoring, swarm member authorization, and persistent file-based storage. The unified `Blockit<T>` API manages blockchain operations and storage atomically, making it straightforward to build production swarm coordination systems.
+The library provides a complete blockchain implementation with generic templated types, allowing robot state, sensor data, commands, and any data structure to be stored on-chain. It combines cryptographic security through Ed25519 signatures with practical features like content anchoring, swarm member authorization, W3C-compliant Decentralized Identifiers (DIDs) and Verifiable Credentials (VCs), and persistent file-based storage. The unified `Blockit<T>` API manages blockchain operations and storage atomically, making it straightforward to build production swarm coordination systems.
 
 Key design principles include type safety through C++20 templates, thread-safe concurrent access, zero-copy serialization with datapod, and modular architecture that allows using individual components independently. Whether you need simple state synchronization or full-featured swarm consensus, Blockit provides the building blocks for robots that trust each other.
 
@@ -41,13 +41,13 @@ Key design principles include type safety through C++20 templates, thread-safe c
 │  │  ┌────────┐ ┌─────────┐  │  │   │ (Ed25519)│   │  (Identity + State)  │  │
 │  │  │Proposal│ │ Quorum  │  │  │   └────┬─────┘   └──────────────────────┘  │
 │  │  │Manager │ │ Engine  │  │  │        │                                   │
-│  │  └────────┘ └─────────┘  │  │   ┌────▼─────┐                             │
-│  └──────────────────────────┘  │   │  Signer  │                             │
-│                                │   │ (Crypto) │                             │
-│  ┌──────────────────────────┐  │   └──────────┘                             │
-│  │    Authenticator         │  │                                            │
-│  │  (Access Control)        │  │                                            │
-│  └──────────────────────────┘  │                                            │
+│  │  └────────┘ └─────────┘  │  │   ┌────▼─────┐   ┌──────────────────────┐  │
+│  └──────────────────────────┘  │   │  Signer  │   │   W3C DID/VC Stack   │  │
+│                                │   │ (Crypto) │   │  ┌────────┐ ┌──────┐ │  │
+│  ┌──────────────────────────┐  │   └──────────┘   │  │  DID   │ │  VC  │ │  │
+│  │    Authenticator         │  │                  │  │Registry│ │Issuer│ │  │
+│  │  (Access Control)        │  │                  │  └────────┘ └──────┘ │  │
+│  └──────────────────────────┘  │                  └──────────────────────┘  │
 └────────────────────────────────┴────────────────────────────────────────────┘
                     │                           │
                     └───────────────────────────┘
@@ -540,6 +540,73 @@ if (robot_key.isExpired()) {
 }
 ```
 
+### 9. Decentralized Robot Identity (W3C DID)
+
+Give robots standards-compliant decentralized identities with verifiable credentials for capabilities, certifications, and zone access.
+
+```cpp
+#include <blockit/blockit.hpp>
+#include <blockit/identity/identity.hpp>
+using namespace blockit;
+
+// Initialize blockchain with DID support
+Blockit<RobotTask> blockit;
+auto crypto = std::make_shared<Crypto>("fleet_key");
+blockit.initialize("./fleet_data", "robot-fleet", "genesis", genesis_task, crypto);
+blockit.initializeDID();
+
+// Fleet manager creates its DID
+auto fleet_mgr_key = Key::generate().value();
+auto [fleet_doc, _] = blockit.createDID(fleet_mgr_key).value();
+auto fleet_did = fleet_doc.getId();
+// did:blockit:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069
+
+// Onboard a new robot with DID + authorization credential
+auto robot_key = Key::generate().value();
+auto [robot_doc, auth_cred] = blockit.createRobotIdentity(
+    robot_key,
+    "DELIVERY_BOT_001",
+    {"navigation", "pickup", "delivery", "charging"},
+    fleet_mgr_key
+).value();
+
+std::cout << "Robot DID: " << robot_doc.getId().toString() << "\n";
+std::cout << "Capabilities: " << auth_cred.getClaim("capabilities").value() << "\n";
+
+// Issue time-limited zone access credential
+auto zone_cred = blockit.issueCredential(
+    fleet_mgr_key,
+    robot_doc.getId(),
+    CredentialType::ZoneAccess,
+    {{"zone_id", "warehouse_a"}, {"access_level", "full"}},
+    std::chrono::hours(8)  // Valid for one shift
+).value();
+
+// Robot bundles credentials into a verifiable presentation
+auto presentation = VerifiablePresentation::create(robot_doc.getId());
+presentation.addCredential(auth_cred);
+presentation.addCredential(zone_cred);
+presentation.setChallenge("access-request-" + std::to_string(std::time(nullptr)));
+presentation.sign(robot_key, robot_doc.getId().withFragment("key-1"));
+
+// Verifier checks credentials
+auto verify_result = presentation.verifyWithKey(robot_key);
+if (verify_result.is_ok() && verify_result.value()) {
+    std::cout << "Robot identity and credentials verified!\n";
+}
+
+// Revoke access when shift ends
+auto status_list = blockit.getCredentialStatusList();
+status_list->recordRevoke(zone_cred.getId(), fleet_did.toString(), "Shift ended");
+```
+
+## Documentation
+
+For detailed documentation on each module, see:
+- [Ledger Module](./misc/LEDGER.md) - Blockchain, blocks, transactions, Merkle trees, PoA consensus
+- [Storage Module](./misc/STORAGE.md) - File-based persistence, content anchoring, unified API
+- [Identity Module (DID)](./misc/DID.md) - W3C DIDs, Verifiable Credentials, robot identity
+
 ## Features
 
 - **Swarm Trust** - Robots establish cryptographic trust without central authority
@@ -557,6 +624,12 @@ if (robot_key.isExpired()) {
   auto robot_key = Key::generate().value();
   auto signature = robot_key.sign(sensor_data).value();
   ```
+
+- **W3C DID/VC Support** - Standards-compliant decentralized identities
+  - DID Documents with verification methods and services
+  - Verifiable Credentials for robot capabilities, zone access, certifications
+  - Verifiable Presentations for bundled credential exchange
+  - Credential status tracking (active, suspended, revoked)
 
 - **Task Ledger** - Publish, claim, and complete tasks with full audit trail
   - Priority-based task ordering
