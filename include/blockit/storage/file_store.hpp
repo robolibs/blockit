@@ -134,6 +134,24 @@ namespace blockit::storage {
         }
     };
 
+    /// Validator record for PoA storage
+    struct ValidatorRecord {
+        String validator_id;
+        String participant_id;
+        Vector<u8> identity_data; // Serialized Key
+        i32 weight = 1;
+        i32 status = 0; // 0 = ACTIVE, 1 = OFFLINE, 2 = REVOKED
+        i64 last_seen = 0;
+        i64 created_at = 0;
+
+        auto members() {
+            return std::tie(validator_id, participant_id, identity_data, weight, status, last_seen, created_at);
+        }
+        auto members() const {
+            return std::tie(validator_id, participant_id, identity_data, weight, status, last_seen, created_at);
+        }
+    };
+
     /// Query filter for ledger queries
     struct LedgerQuery {
         Optional<i64> block_height_min;
@@ -201,10 +219,12 @@ namespace blockit::storage {
             block_index_ = std::move(other.block_index_);
             tx_index_ = std::move(other.tx_index_);
             anchor_index_ = std::move(other.anchor_index_);
+            validator_index_ = std::move(other.validator_index_);
             hash_to_height_ = std::move(other.hash_to_height_);
             pending_blocks_ = std::move(other.pending_blocks_);
             pending_transactions_ = std::move(other.pending_transactions_);
             pending_anchors_ = std::move(other.pending_anchors_);
+            pending_validators_ = std::move(other.pending_validators_);
             other.is_open_ = false;
         }
 
@@ -220,10 +240,12 @@ namespace blockit::storage {
                 block_index_ = std::move(other.block_index_);
                 tx_index_ = std::move(other.tx_index_);
                 anchor_index_ = std::move(other.anchor_index_);
+                validator_index_ = std::move(other.validator_index_);
                 hash_to_height_ = std::move(other.hash_to_height_);
                 pending_blocks_ = std::move(other.pending_blocks_);
                 pending_transactions_ = std::move(other.pending_transactions_);
                 pending_anchors_ = std::move(other.pending_anchors_);
+                pending_validators_ = std::move(other.pending_validators_);
                 other.is_open_ = false;
             }
             return *this;
@@ -273,6 +295,7 @@ namespace blockit::storage {
                 auto blocks_path = base_path_ / "blocks.dat";
                 auto tx_path = base_path_ / "transactions.dat";
                 auto anchors_path = base_path_ / "anchors.dat";
+                auto validators_path = base_path_ / "validators.dat";
 
                 if (!std::filesystem::exists(blocks_path)) {
                     std::ofstream(blocks_path, std::ios::binary).close();
@@ -282,6 +305,9 @@ namespace blockit::storage {
                 }
                 if (!std::filesystem::exists(anchors_path)) {
                     std::ofstream(anchors_path, std::ios::binary).close();
+                }
+                if (!std::filesystem::exists(validators_path)) {
+                    std::ofstream(validators_path, std::ios::binary).close();
                 }
 
                 return Result<void, Error>::ok();
@@ -305,10 +331,8 @@ namespace blockit::storage {
         class TxGuard {
           public:
             inline explicit TxGuard(FileStore &store) : store_(store), committed_(false) {
-                std::unique_lock lock(store_.mutex_);
-                store_.pending_blocks_.clear();
-                store_.pending_transactions_.clear();
-                store_.pending_anchors_.clear();
+                // Note: Do NOT clear pending data on construction.
+                // TxGuard commits or rolls back any pending changes.
             }
 
             inline ~TxGuard() {
@@ -317,6 +341,7 @@ namespace blockit::storage {
                     store_.pending_blocks_.clear();
                     store_.pending_transactions_.clear();
                     store_.pending_anchors_.clear();
+                    store_.pending_validators_.clear();
                 }
             }
 
@@ -336,6 +361,7 @@ namespace blockit::storage {
                     store_.pending_blocks_.clear();
                     store_.pending_transactions_.clear();
                     store_.pending_anchors_.clear();
+                    store_.pending_validators_.clear();
                     committed_ = true;
                 }
             }
@@ -479,6 +505,100 @@ namespace blockit::storage {
             }
 
             return anchors;
+        }
+
+        // ===========================================
+        // Validator Storage (PoA)
+        // ===========================================
+
+        /// Store validator record
+        inline Result<void, Error> storeValidator(const ValidatorRecord &record) {
+            std::unique_lock lock(mutex_);
+            if (!is_open_)
+                return Result<void, Error>::err(Error::invalid_argument("Store not open"));
+
+            pending_validators_.push_back(record);
+            return Result<void, Error>::ok();
+        }
+
+        /// Load validator by ID
+        inline Optional<ValidatorRecord> loadValidator(const String &validator_id) {
+            std::shared_lock lock(mutex_);
+            if (!is_open_)
+                return Optional<ValidatorRecord>();
+
+            // Check pending first
+            for (const auto &record : pending_validators_) {
+                if (std::string(record.validator_id.c_str()) == std::string(validator_id.c_str())) {
+                    return Optional<ValidatorRecord>(record);
+                }
+            }
+
+            // Check index
+            std::string key(validator_id.c_str());
+            auto it = validator_index_.find(key);
+            if (it == validator_index_.end())
+                return Optional<ValidatorRecord>();
+
+            return readValidatorAtUnsafe(it->second);
+        }
+
+        /// Load all validators
+        inline Vector<ValidatorRecord> loadAllValidators() {
+            std::shared_lock lock(mutex_);
+            Vector<ValidatorRecord> validators;
+            if (!is_open_)
+                return validators;
+
+            // Read from storage
+            auto stored = readAllValidatorsUnsafe();
+            for (auto &v : stored) {
+                validators.push_back(std::move(v));
+            }
+
+            // Add pending
+            for (const auto &record : pending_validators_) {
+                validators.push_back(record);
+            }
+
+            return validators;
+        }
+
+        /// Update validator status
+        inline Result<void, Error> updateValidatorStatus(const String &validator_id, i32 status) {
+            std::unique_lock lock(mutex_);
+            if (!is_open_)
+                return Result<void, Error>::err(Error::invalid_argument("Store not open"));
+
+            // Check pending first and update
+            for (auto &record : pending_validators_) {
+                if (std::string(record.validator_id.c_str()) == std::string(validator_id.c_str())) {
+                    record.status = status;
+                    return Result<void, Error>::ok();
+                }
+            }
+
+            // Load from storage, update, and mark as pending
+            std::string key(validator_id.c_str());
+            auto it = validator_index_.find(key);
+            if (it == validator_index_.end())
+                return Result<void, Error>::err(Error::not_found("Validator not found"));
+
+            auto existing = readValidatorAtUnsafe(it->second);
+            if (!existing.has_value())
+                return Result<void, Error>::err(Error::not_found("Validator not found"));
+
+            ValidatorRecord updated = *existing;
+            updated.status = status;
+            pending_validators_.push_back(updated);
+
+            return Result<void, Error>::ok();
+        }
+
+        /// Get validator count
+        inline i64 getValidatorCount() {
+            std::shared_lock lock(mutex_);
+            return static_cast<i64>(validator_index_.size() + pending_validators_.size());
         }
 
         /// Query transactions with filters
@@ -754,7 +874,7 @@ namespace blockit::storage {
 
             // Serialize using datapod (need mutable copy)
             T mutable_record = record;
-            auto buffer = datapod::serialize(mutable_record);
+            auto buffer = datapod::serialize<Mode::NONE>(mutable_record);
             u32 len = static_cast<u32>(buffer.size());
 
             out.write(reinterpret_cast<const char *>(&len), sizeof(len));
@@ -838,6 +958,14 @@ namespace blockit::storage {
             return anchors;
         }
 
+        inline Optional<ValidatorRecord> readValidatorAtUnsafe(u64 offset) {
+            return readRecordAtUnsafe<ValidatorRecord>(base_path_ / "validators.dat", offset);
+        }
+
+        inline Vector<ValidatorRecord> readAllValidatorsUnsafe() {
+            return readAllRecordsUnsafe<ValidatorRecord>(base_path_ / "validators.dat");
+        }
+
         // ===========================================
         // Index management (unsafe - caller must hold lock)
         // ===========================================
@@ -846,11 +974,13 @@ namespace blockit::storage {
             block_index_.clear();
             tx_index_.clear();
             anchor_index_.clear();
+            validator_index_.clear();
             hash_to_height_.clear();
 
             loadBlockIndexUnsafe();
             loadTransactionIndexUnsafe();
             loadAnchorIndexUnsafe();
+            loadValidatorIndexUnsafe();
         }
 
         inline void loadBlockIndexUnsafe() {
@@ -929,6 +1059,31 @@ namespace blockit::storage {
             }
         }
 
+        inline void loadValidatorIndexUnsafe() {
+            std::lock_guard<std::mutex> file_lock(file_mutex_);
+            auto file = base_path_ / "validators.dat";
+            std::ifstream in(file, std::ios::binary);
+            if (!in)
+                return;
+
+            while (in) {
+                u64 record_offset = in.tellg();
+
+                u32 len;
+                in.read(reinterpret_cast<char *>(&len), sizeof(len));
+                if (!in)
+                    break;
+
+                ByteBuf data(len);
+                in.read(reinterpret_cast<char *>(data.data()), len);
+                if (!in)
+                    break;
+
+                auto record = datapod::deserialize<Mode::NONE, ValidatorRecord>(data);
+                validator_index_[std::string(record.validator_id.c_str())] = record_offset;
+            }
+        }
+
         inline void flushPending() {
             std::unique_lock lock(mutex_);
             // Flush blocks
@@ -955,6 +1110,14 @@ namespace blockit::storage {
                 anchor_index_[std::string(record.content_id.c_str())] = offset;
             }
             pending_anchors_.clear();
+
+            // Flush validators
+            for (const auto &record : pending_validators_) {
+                u64 offset;
+                appendRecordUnsafe(base_path_ / "validators.dat", record, offset);
+                validator_index_[std::string(record.validator_id.c_str())] = offset;
+            }
+            pending_validators_.clear();
         }
 
         inline void flushIndexesUnsafe() {
@@ -977,12 +1140,14 @@ namespace blockit::storage {
         std::map<i64, u64> block_index_;
         std::unordered_map<std::string, u64> tx_index_;
         std::unordered_map<std::string, u64> anchor_index_;
+        std::unordered_map<std::string, u64> validator_index_;
         std::unordered_map<std::string, i64> hash_to_height_;
 
         // Pending writes
         Vector<BlockRecord> pending_blocks_;
         Vector<TransactionRecord> pending_transactions_;
         Vector<AnchorRecord> pending_anchors_;
+        Vector<ValidatorRecord> pending_validators_;
     };
 
 } // namespace blockit::storage

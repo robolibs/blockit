@@ -16,17 +16,31 @@ namespace blockit {
 
     /// Validator's signature on a block
     struct BlockSignature {
-        std::string validator_id;
-        std::string participant_id;
-        std::vector<uint8_t> signature;
-        dp::i64 signed_at; // Unix timestamp in milliseconds
+        dp::String validator_id;
+        dp::String participant_id;
+        dp::Vector<dp::u8> signature;
+        dp::i64 signed_at{0}; // Unix timestamp in milliseconds
 
-        /// Serialize block signature
+        // Default constructor
+        BlockSignature() = default;
+
+        // Constructor from std types (for convenience)
+        BlockSignature(const std::string &vid, const std::string &pid, const std::vector<uint8_t> &sig, int64_t ts)
+            : validator_id(dp::String(vid.c_str())), participant_id(dp::String(pid.c_str())),
+              signature(dp::Vector<dp::u8>(sig.begin(), sig.end())), signed_at(ts) {}
+
+        // For datapod serialization
+        auto members() { return std::tie(validator_id, participant_id, signature, signed_at); }
+        auto members() const { return std::tie(validator_id, participant_id, signature, signed_at); }
+
+        /// Serialize block signature (manual - for compatibility)
         inline std::vector<uint8_t> serialize() const {
             std::vector<dp::u8> result;
+            std::string vid(validator_id.c_str());
+            std::string pid(participant_id.c_str());
 
-            dp::u32 vid_len = static_cast<dp::u32>(validator_id.length());
-            dp::u32 pid_len = static_cast<dp::u32>(participant_id.length());
+            dp::u32 vid_len = static_cast<dp::u32>(vid.length());
+            dp::u32 pid_len = static_cast<dp::u32>(pid.length());
             dp::u32 sig_len = static_cast<dp::u32>(signature.size());
 
             result.reserve(4 + vid_len + 4 + pid_len + 4 + sig_len + 8);
@@ -34,12 +48,12 @@ namespace blockit {
             // Validator ID length + data
             const dp::u8 *vid_len_bytes = reinterpret_cast<const dp::u8 *>(&vid_len);
             result.insert(result.end(), vid_len_bytes, vid_len_bytes + 4);
-            result.insert(result.end(), validator_id.begin(), validator_id.end());
+            result.insert(result.end(), vid.begin(), vid.end());
 
             // Participant ID length + data
             const dp::u8 *pid_len_bytes = reinterpret_cast<const dp::u8 *>(&pid_len);
             result.insert(result.end(), pid_len_bytes, pid_len_bytes + 4);
-            result.insert(result.end(), participant_id.begin(), participant_id.end());
+            result.insert(result.end(), pid.begin(), pid.end());
 
             // Signature length + data
             const dp::u8 *sig_len_bytes = reinterpret_cast<const dp::u8 *>(&sig_len);
@@ -53,7 +67,7 @@ namespace blockit {
             return result;
         }
 
-        /// Deserialize block signature
+        /// Deserialize block signature (manual - for compatibility)
         inline static dp::Result<BlockSignature, dp::Error> deserialize(const std::vector<uint8_t> &data) {
             if (data.size() < 20) {
                 return dp::Result<BlockSignature, dp::Error>::err(
@@ -69,7 +83,7 @@ namespace blockit {
             if (offset + vid_len > data.size()) {
                 return dp::Result<BlockSignature, dp::Error>::err(dp::Error::invalid_argument("Truncated data"));
             }
-            sig.validator_id = std::string(data.begin() + offset, data.begin() + offset + vid_len);
+            sig.validator_id = dp::String(std::string(data.begin() + offset, data.begin() + offset + vid_len).c_str());
             offset += vid_len;
 
             // Participant ID
@@ -81,7 +95,8 @@ namespace blockit {
             if (offset + pid_len > data.size()) {
                 return dp::Result<BlockSignature, dp::Error>::err(dp::Error::invalid_argument("Truncated data"));
             }
-            sig.participant_id = std::string(data.begin() + offset, data.begin() + offset + pid_len);
+            sig.participant_id =
+                dp::String(std::string(data.begin() + offset, data.begin() + offset + pid_len).c_str());
             offset += pid_len;
 
             // Signature
@@ -93,7 +108,7 @@ namespace blockit {
             if (offset + sig_len > data.size()) {
                 return dp::Result<BlockSignature, dp::Error>::err(dp::Error::invalid_argument("Truncated data"));
             }
-            sig.signature = std::vector<uint8_t>(data.begin() + offset, data.begin() + offset + sig_len);
+            sig.signature = dp::Vector<dp::u8>(data.begin() + offset, data.begin() + offset + sig_len);
             offset += sig_len;
 
             // Signed at
@@ -176,6 +191,19 @@ namespace blockit {
             }
 
             return dp::Result<Validator *, dp::Error>::ok(it->second.get());
+        }
+
+        /// Get validator by participant ID
+        inline dp::Result<Validator *, dp::Error> getValidatorByParticipant(const std::string &participant_id) {
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            for (auto &[id, validator] : validators_) {
+                if (validator->getParticipantId() == participant_id) {
+                    return dp::Result<Validator *, dp::Error>::ok(validator.get());
+                }
+            }
+
+            return dp::Result<Validator *, dp::Error>::err(dp::Error::not_found("Validator not found for participant"));
         }
 
         /// Get all active validators
@@ -299,7 +327,7 @@ namespace blockit {
             // Count unique validator signatures
             std::unordered_set<std::string> unique_signers;
             for (const auto &sig : signatures) {
-                unique_signers.insert(sig.validator_id);
+                unique_signers.insert(std::string(sig.validator_id.c_str()));
             }
 
             return static_cast<int>(unique_signers.size()) >= required;
@@ -426,12 +454,18 @@ namespace blockit {
                     dp::Error::invalid_argument("Validator already signed this proposal"));
             }
 
-            // Store the signature
+            // Check if validator exists and can sign
             auto validator_it = validators_.find(validator_id);
-            std::string participant_id = validator_id;
-            if (validator_it != validators_.end()) {
-                participant_id = validator_it->second->getParticipantId();
+            if (validator_it == validators_.end()) {
+                return dp::Result<bool, dp::Error>::err(dp::Error::not_found("Validator not found"));
             }
+            if (!validator_it->second->canSign()) {
+                return dp::Result<bool, dp::Error>::err(
+                    dp::Error::invalid_argument("Validator is not authorized to sign (revoked or offline)"));
+            }
+
+            // Store the signature
+            std::string participant_id = validator_it->second->getParticipantId();
 
             auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::system_clock::now().time_since_epoch())

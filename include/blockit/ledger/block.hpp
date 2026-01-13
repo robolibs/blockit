@@ -6,6 +6,7 @@
 #include <sstream>
 
 #include "merkle.hpp"
+#include "poa.hpp"
 #include "transaction.hpp"
 
 namespace blockit {
@@ -21,6 +22,10 @@ namespace blockit {
         dp::i64 nonce_{0};
         Timestamp timestamp_{};
         dp::String merkle_root_{};
+
+        // PoA consensus fields
+        dp::String proposer_id_{};
+        dp::Vector<BlockSignature> validator_signatures_{};
 
         Block() = default;
 
@@ -40,11 +45,50 @@ namespace blockit {
         }
 
         auto members() {
-            return std::tie(index_, previous_hash_, hash_, transactions_, nonce_, timestamp_, merkle_root_);
+            return std::tie(index_, previous_hash_, hash_, transactions_, nonce_, timestamp_, merkle_root_,
+                            proposer_id_, validator_signatures_);
         }
         auto members() const {
-            return std::tie(index_, previous_hash_, hash_, transactions_, nonce_, timestamp_, merkle_root_);
+            return std::tie(index_, previous_hash_, hash_, transactions_, nonce_, timestamp_, merkle_root_,
+                            proposer_id_, validator_signatures_);
         }
+
+        // PoA methods
+        inline dp::Result<void, dp::Error> addValidatorSignature(const std::string &validator_id,
+                                                                 const std::string &participant_id,
+                                                                 const std::vector<uint8_t> &signature) {
+            // Check if validator already signed
+            for (const auto &sig : validator_signatures_) {
+                if (std::string(sig.validator_id.c_str()) == validator_id) {
+                    return dp::Result<void, dp::Error>::err(
+                        dp::Error::invalid_argument("Validator already signed this block"));
+                }
+            }
+
+            BlockSignature block_sig;
+            block_sig.validator_id = dp::String(validator_id.c_str());
+            block_sig.participant_id = dp::String(participant_id.c_str());
+            block_sig.signature = dp::Vector<dp::u8>(signature.begin(), signature.end());
+            block_sig.signed_at = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+
+            validator_signatures_.push_back(block_sig);
+            return dp::Result<void, dp::Error>::ok();
+        }
+
+        inline bool hasSigned(const std::string &validator_id) const {
+            for (const auto &sig : validator_signatures_) {
+                if (std::string(sig.validator_id.c_str()) == validator_id) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        inline size_t countValidSignatures() const { return validator_signatures_.size(); }
+
+        inline void setProposer(const std::string &proposer_id) { proposer_id_ = dp::String(proposer_id.c_str()); }
+
+        inline std::string getProposer() const { return std::string(proposer_id_.c_str()); }
 
         inline dp::Result<void, dp::Error> buildMerkleTree() {
             std::vector<std::string> tx_strings;

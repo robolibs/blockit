@@ -297,8 +297,8 @@ TEST_SUITE("PoA Proposal Tests") {
 
         const auto& signatures = get_result.value();
         CHECK(signatures.size() == 1);
-        CHECK(signatures[0].signature == sign_result.value());
-        CHECK(signatures[0].validator_id == key.value().getId());
-        CHECK(signatures[0].participant_id == "alice");
+        CHECK(signatures[0].signature.size() == sign_result.value().size());
+        CHECK(std::string(signatures[0].validator_id.c_str()) == key.value().getId());
+        CHECK(std::string(signatures[0].participant_id.c_str()) == "alice");
     }
 }

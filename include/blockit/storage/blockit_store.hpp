@@ -2,9 +2,11 @@
 
 #include <blockit/ledger/block.hpp>
 #include <blockit/ledger/chain.hpp>
+#include <blockit/ledger/poa.hpp>
 #include <blockit/ledger/transaction.hpp>
 #include <blockit/storage/file_store.hpp>
 #include <datapod/datapod.hpp>
+#include <map>
 #include <mutex>
 #include <shared_mutex>
 
@@ -121,6 +123,39 @@ namespace blockit {
         /// Check if blockchain and storage are in sync
         /// @return Result with true if consistent
         Result<bool, Error> verifyConsistency();
+
+        // ===========================================
+        // PoA Consensus Support
+        // ===========================================
+
+        /// Initialize PoA consensus for the chain
+        /// @param config PoA configuration
+        void initializePoA(const PoAConfig &config = PoAConfig{});
+
+        /// Check if PoA is enabled
+        bool hasPoA() const;
+
+        /// Add a validator
+        /// @param participant_id Participant identifier
+        /// @param identity Validator's key identity
+        /// @param weight Validator weight (default 1)
+        /// @return Result indicating success or error
+        Result<void, Error> addValidator(const std::string &participant_id, const Key &identity, int weight = 1);
+
+        /// Add a block with PoA consensus validation
+        /// @param transactions Transactions to include
+        /// @param proposer_id Proposer's participant ID
+        /// @param signatures Map of validator_id -> signature
+        /// @return Result indicating success or error
+        Result<void, Error> addBlockWithPoA(const std::vector<Transaction<T>> &transactions,
+                                            const std::string &proposer_id,
+                                            const std::map<std::string, std::vector<uint8_t>> &signatures);
+
+        /// Get required signatures for PoA
+        int getRequiredSignatures() const;
+
+        /// Get active validator count
+        size_t getActiveValidatorCount() const;
 
       private:
         Chain<T> chain_;
@@ -354,6 +389,125 @@ namespace blockit {
         i64 db_blocks = const_cast<storage::FileStore &>(store_).getBlockCount();
 
         return Result<bool, Error>::ok(chain_blocks == db_blocks);
+    }
+
+    // ===========================================
+    // PoA Implementation
+    // ===========================================
+
+    template <typename T> void Blockit<T>::initializePoA(const PoAConfig &config) {
+        std::unique_lock lock(mutex_);
+        chain_.initializePoA(config);
+    }
+
+    template <typename T> bool Blockit<T>::hasPoA() const {
+        std::shared_lock lock(mutex_);
+        return chain_.hasPoA();
+    }
+
+    template <typename T>
+    Result<void, Error> Blockit<T>::addValidator(const std::string &participant_id, const Key &identity, int weight) {
+        std::unique_lock lock(mutex_);
+        if (!initialized_)
+            return Result<void, Error>::err(Error::invalid_argument("Store not initialized"));
+        return chain_.addValidator(participant_id, identity, weight);
+    }
+
+    template <typename T>
+    Result<void, Error> Blockit<T>::addBlockWithPoA(const std::vector<Transaction<T>> &transactions,
+                                                    const std::string &proposer_id,
+                                                    const std::map<std::string, std::vector<uint8_t>> &signatures) {
+        std::unique_lock lock(mutex_);
+        if (!initialized_)
+            return Result<void, Error>::err(Error::invalid_argument("Store not initialized"));
+
+        if (!chain_.hasPoA()) {
+            return Result<void, Error>::err(Error::invalid_argument("PoA not initialized"));
+        }
+
+        auto tx_guard = store_.beginTransaction();
+
+        // Create blockchain block
+        Block<T> block(transactions);
+        block.setProposer(proposer_id);
+
+        // Add all validator signatures to the block
+        for (const auto &[validator_id, signature] : signatures) {
+            auto validator = chain_.getPoA()->getValidator(validator_id);
+            if (validator.is_ok()) {
+                block.addValidatorSignature(validator_id, validator.value()->getParticipantId(), signature);
+            }
+        }
+
+        // Add block using PoA validation
+        auto add_result = chain_.addBlockWithPoA(block, proposer_id);
+        if (!add_result.is_ok()) {
+            return Result<void, Error>::err(add_result.error());
+        }
+
+        // Get the added block
+        auto last_block_result = chain_.getLastBlock();
+        if (!last_block_result.is_ok()) {
+            return Result<void, Error>::err(last_block_result.error());
+        }
+        const auto &added_block = last_block_result.value();
+
+        // Store block in storage
+        auto store_result = store_.storeBlock(
+            added_block.index_, String(added_block.hash_.c_str()), String(added_block.previous_hash_.c_str()),
+            String(added_block.merkle_root_.c_str()), added_block.timestamp_.sec, added_block.nonce_);
+
+        if (!store_result.is_ok()) {
+            return store_result;
+        }
+
+        // Store transactions
+        for (const auto &tx : transactions) {
+            auto tx_payload = tx.serialize();
+            Vector<u8> payload(tx_payload.begin(), tx_payload.end());
+
+            auto tx_result = store_.storeTransaction(String(tx.uuid_.c_str()), added_block.index_, tx.timestamp_.sec,
+                                                     tx.priority_, payload);
+
+            if (!tx_result.is_ok()) {
+                return tx_result;
+            }
+
+            // Handle pending anchors
+            auto anchor_it = pending_anchors_.find(std::string(tx.uuid_.c_str()));
+            if (anchor_it != pending_anchors_.end()) {
+                const auto &[content_id, content_hash] = anchor_it->second;
+
+                storage::TxRef tx_ref;
+                tx_ref.tx_id = String(tx.uuid_.c_str());
+                tx_ref.block_height = added_block.index_;
+
+                auto merkle_bytes = storage::hexToHash(String(added_block.merkle_root_.c_str()));
+                for (usize i = 0; i < 32; ++i) {
+                    tx_ref.merkle_root[i] = (i < merkle_bytes.size()) ? merkle_bytes[i] : 0;
+                }
+
+                auto anchor_result = store_.createAnchor(content_id, content_hash, tx_ref);
+                if (!anchor_result.is_ok()) {
+                    return anchor_result;
+                }
+
+                pending_anchors_.erase(anchor_it);
+            }
+        }
+
+        tx_guard->commit();
+        return Result<void, Error>::ok();
+    }
+
+    template <typename T> int Blockit<T>::getRequiredSignatures() const {
+        std::shared_lock lock(mutex_);
+        return chain_.getRequiredSignatures();
+    }
+
+    template <typename T> size_t Blockit<T>::getActiveValidatorCount() const {
+        std::shared_lock lock(mutex_);
+        return chain_.getActiveValidatorCount();
     }
 
 } // namespace blockit

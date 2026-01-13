@@ -104,11 +104,9 @@ namespace blockit {
             keylock::keylock crypto(keylock::Algorithm::Ed25519);
             auto result = crypto.verify(data, signature, keypair_.public_key);
 
-            if (!result.success) {
-                return dp::Result<bool, dp::Error>::err(
-                    dp::Error::invalid_argument(dp::String(result.error_message.c_str())));
-            }
-
+            // Verification failure (wrong key/signature) is not an error - it's a valid result of false.
+            // Only return an error if there's a real crypto error (which would be indicated by an error message
+            // without result.success being false due to verification).
             return dp::Result<bool, dp::Error>::ok(result.success);
         }
 

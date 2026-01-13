@@ -8,6 +8,7 @@
 
 #include "auth.hpp"
 #include "block.hpp"
+#include "poa.hpp"
 
 namespace blockit {
 
@@ -22,6 +23,7 @@ namespace blockit {
 
       private:
         mutable std::shared_mutex mutex_;
+        std::unique_ptr<PoAConsensus> poa_; // Optional PoA consensus
 
       public:
         Chain() = default;
@@ -296,6 +298,198 @@ namespace blockit {
 
         inline bool isTransactionUsed(const std::string &tx_id) const {
             return entity_manager_.isTransactionUsed(tx_id);
+        }
+
+        // ===========================================
+        // PoA Consensus Support
+        // ===========================================
+
+        /// Initialize PoA consensus for this chain
+        inline void initializePoA(const PoAConfig &config = PoAConfig{}) {
+            std::unique_lock lock(mutex_);
+            poa_ = std::make_unique<PoAConsensus>(config);
+        }
+
+        /// Check if PoA is enabled
+        inline bool hasPoA() const {
+            std::shared_lock lock(mutex_);
+            return poa_ != nullptr;
+        }
+
+        /// Get PoA consensus (for direct access)
+        inline PoAConsensus *getPoA() {
+            std::shared_lock lock(mutex_);
+            return poa_.get();
+        }
+
+        /// Add a validator to the PoA consensus
+        inline dp::Result<void, dp::Error> addValidator(const std::string &participant_id, const Key &identity,
+                                                        int weight = 1) {
+            std::unique_lock lock(mutex_);
+            if (!poa_) {
+                return dp::Result<void, dp::Error>::err(dp::Error::invalid_argument("PoA not initialized"));
+            }
+            poa_->addValidator(participant_id, identity, weight);
+            return dp::Result<void, dp::Error>::ok();
+        }
+
+        /// Remove a validator from the PoA consensus
+        inline dp::Result<void, dp::Error> revokeValidator(const std::string &validator_id) {
+            std::unique_lock lock(mutex_);
+            if (!poa_) {
+                return dp::Result<void, dp::Error>::err(dp::Error::invalid_argument("PoA not initialized"));
+            }
+            poa_->revokeValidator(validator_id);
+            return dp::Result<void, dp::Error>::ok();
+        }
+
+        /// Get required signature count
+        inline int getRequiredSignatures() const {
+            std::shared_lock lock(mutex_);
+            if (!poa_)
+                return 0;
+            return poa_->getRequiredSignatures();
+        }
+
+        /// Get active validator count
+        inline size_t getActiveValidatorCount() const {
+            std::shared_lock lock(mutex_);
+            if (!poa_)
+                return 0;
+            return poa_->getActiveValidatorCount();
+        }
+
+        /// Add a block with PoA consensus validation
+        inline dp::Result<void, dp::Error> addBlockWithPoA(Block<T> &block, const std::string &proposer_id) {
+            std::unique_lock lock(mutex_);
+
+            if (!poa_) {
+                return dp::Result<void, dp::Error>::err(dp::Error::invalid_argument("PoA not initialized"));
+            }
+
+            if (blocks_.empty()) {
+                return dp::Result<void, dp::Error>::err(dp::Error::invalid_argument("Cannot add block to empty chain"));
+            }
+
+            // Set block metadata
+            block.previous_hash_ = blocks_.back().hash_;
+            block.index_ = blocks_.back().index_ + 1;
+            block.setProposer(proposer_id);
+
+            // Check for duplicate transactions
+            for (const auto &txn : block.transactions_) {
+                if (entity_manager_.isTransactionUsed(std::string(txn.uuid_.c_str()))) {
+                    std::string msg = "Duplicate transaction detected: " + std::string(txn.uuid_.c_str());
+                    return dp::Result<void, dp::Error>::err(dp::Error::already_exists(dp::String(msg.c_str())));
+                }
+            }
+
+            // Build merkle tree and calculate hash
+            block.buildMerkleTree();
+            auto hash_result = block.calculateHash();
+            if (!hash_result.is_ok()) {
+                return dp::Result<void, dp::Error>::err(hash_result.error());
+            }
+            block.hash_ = dp::String(hash_result.value().c_str());
+
+            // Validate block
+            auto valid_result = block.isValid();
+            if (!valid_result.is_ok()) {
+                return dp::Result<void, dp::Error>::err(valid_result.error());
+            }
+            if (!valid_result.value()) {
+                return dp::Result<void, dp::Error>::err(
+                    dp::Error::invalid_argument("Invalid block attempted to be added"));
+            }
+
+            // Check PoA quorum
+            size_t required = static_cast<size_t>(poa_->getRequiredSignatures());
+            if (block.countValidSignatures() < required) {
+                std::string msg = "Block requires " + std::to_string(required) + " signatures, has " +
+                                  std::to_string(block.countValidSignatures());
+                return dp::Result<void, dp::Error>::err(dp::Error::invalid_argument(dp::String(msg.c_str())));
+            }
+
+            // Mark all transactions as used
+            for (const auto &txn : block.transactions_) {
+                auto mark_result = entity_manager_.markTransactionUsed(std::string(txn.uuid_.c_str()));
+                if (!mark_result.is_ok()) {
+                    return dp::Result<void, dp::Error>::err(mark_result.error());
+                }
+            }
+
+            blocks_.push_back(block);
+            return dp::Result<void, dp::Error>::ok();
+        }
+
+        /// Create a proposal for a new block (returns proposal ID)
+        inline dp::Result<std::string, dp::Error> createBlockProposal(Block<T> &block, const std::string &proposer_id) {
+            std::unique_lock lock(mutex_);
+
+            if (!poa_) {
+                return dp::Result<std::string, dp::Error>::err(dp::Error::invalid_argument("PoA not initialized"));
+            }
+
+            // Prepare block
+            if (!blocks_.empty()) {
+                block.previous_hash_ = blocks_.back().hash_;
+                block.index_ = blocks_.back().index_ + 1;
+            }
+            block.setProposer(proposer_id);
+            block.buildMerkleTree();
+
+            auto hash_result = block.calculateHash();
+            if (!hash_result.is_ok()) {
+                return dp::Result<std::string, dp::Error>::err(hash_result.error());
+            }
+            block.hash_ = dp::String(hash_result.value().c_str());
+
+            // Get proposer's validator ID
+            auto validator = poa_->getValidatorByParticipant(proposer_id);
+            if (!validator.is_ok()) {
+                return dp::Result<std::string, dp::Error>::err(validator.error());
+            }
+
+            // Create proposal
+            auto proposal_id = poa_->createProposal(hash_result.value(), validator.value()->getId());
+            return dp::Result<std::string, dp::Error>::ok(proposal_id);
+        }
+
+        /// Sign a block proposal
+        inline dp::Result<bool, dp::Error> signBlockProposal(const std::string &proposal_id, Block<T> &block,
+                                                             const Key &signer_key) {
+            std::unique_lock lock(mutex_);
+
+            if (!poa_) {
+                return dp::Result<bool, dp::Error>::err(dp::Error::invalid_argument("PoA not initialized"));
+            }
+
+            // Sign the block hash
+            auto hash = block.calculateHash();
+            if (!hash.is_ok()) {
+                return dp::Result<bool, dp::Error>::err(hash.error());
+            }
+
+            std::vector<uint8_t> hash_bytes(hash.value().begin(), hash.value().end());
+            auto sig_result = signer_key.sign(hash_bytes);
+            if (!sig_result.is_ok()) {
+                return dp::Result<bool, dp::Error>::err(sig_result.error());
+            }
+
+            // Add signature to consensus
+            auto add_result = poa_->addSignature(proposal_id, signer_key.getId(), sig_result.value());
+            if (!add_result.is_ok()) {
+                return dp::Result<bool, dp::Error>::err(add_result.error());
+            }
+
+            // Get validator info for block signature
+            auto validator = poa_->getValidator(signer_key.getId());
+            if (validator.is_ok()) {
+                block.addValidatorSignature(signer_key.getId(), validator.value()->getParticipantId(),
+                                            sig_result.value());
+            }
+
+            return dp::Result<bool, dp::Error>::ok(add_result.value()); // Returns true if quorum reached
         }
 
         // Serialize to binary using datapod
