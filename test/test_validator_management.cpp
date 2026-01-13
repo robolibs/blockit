@@ -3,7 +3,7 @@
 #include <chrono>
 #include <thread>
 
-using namespace blockit::ledger;
+using namespace blockit;
 
 TEST_SUITE("Validator Management Tests") {
     TEST_CASE("Create validator with permanent key") {

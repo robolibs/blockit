@@ -3,7 +3,7 @@
 #include <thread>
 #include <chrono>
 
-using namespace blockit::ledger;
+using namespace blockit;
 
 int main() {
     std::cout << "=== PoA Consensus Demo ===" << std::endl;
@@ -18,18 +18,26 @@ int main() {
 
     PoAConsensus consensus(config);
 
+    // Option 1: Use Key::generate() convenience wrapper
     auto alice_key = Key::generate();
     auto bob_key = Key::generate();
-    auto charlie_key = Key::generate();
 
-    if (!alice_key.is_ok() || !bob_key.is_ok() || !charlie_key.is_ok()) {
+    if (!alice_key.is_ok() || !bob_key.is_ok()) {
         std::cerr << "Failed to generate keys" << std::endl;
         return 1;
     }
 
+    // Option 2: Use keylock directly, then wrap in Key
+    keylock::keylock crypto(keylock::Algorithm::Ed25519);
+    auto charlie_keypair = crypto.generate_keypair();
+    Key charlie_key(charlie_keypair);  // Direct construction from keylock::KeyPair
+
+    std::cout << "   Alice/Bob: using Key::generate()" << std::endl;
+    std::cout << "   Charlie: using keylock directly + Key(keypair)" << std::endl;
+
     consensus.addValidator("alice", alice_key.value());
     consensus.addValidator("bob", bob_key.value());
-    consensus.addValidator("charlie", charlie_key.value());
+    consensus.addValidator("charlie", charlie_key);
 
     std::cout << "   Active validators: " << consensus.getActiveValidatorCount() << std::endl;
     std::cout << "   Required signatures: " << consensus.getRequiredSignatures() << std::endl;
@@ -93,15 +101,15 @@ int main() {
     // Example 5: Test offline handling
     std::cout << "\n5. Testing offline handling..." << std::endl;
 
-    auto charlie_result = consensus.getValidator(charlie_key.value().getId());
+    auto charlie_result = consensus.getValidator(charlie_key.getId());
     if (charlie_result.is_ok()) {
         std::cout << "   Charlie isOnline: " << (charlie_result.value()->isOnline(120000) ? "yes" : "no") << std::endl;
     }
 
-    consensus.markOffline(charlie_key.value().getId());
+    consensus.markOffline(charlie_key.getId());
     std::cout << "   Marked Charlie offline" << std::endl;
 
-    charlie_result = consensus.getValidator(charlie_key.value().getId());
+    charlie_result = consensus.getValidator(charlie_key.getId());
     if (charlie_result.is_ok()) {
         std::cout << "   Charlie status: " << (int)charlie_result.value()->getStatus() << " (1 = OFFLINE)" << std::endl;
     }

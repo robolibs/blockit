@@ -4,9 +4,7 @@
 #include <string>
 #include <vector>
 
-#include <blockit/common/error.hpp>
-
-namespace blockit::ledger {
+namespace blockit {
 
     class MerkleTree {
       private:
@@ -20,7 +18,7 @@ namespace blockit::ledger {
             auto hash_result = crypto.hash(data_vec);
             if (hash_result.success)
                 return dp::Result<std::string, dp::Error>::ok(keylock::keylock::to_hex(hash_result.data));
-            return dp::Result<std::string, dp::Error>::err(hash_failed("Failed to hash data"));
+            return dp::Result<std::string, dp::Error>::err(dp::Error::io_error("Failed to hash data"));
         }
 
         inline dp::Result<std::string, dp::Error> combineHashes(const std::string &left,
@@ -79,7 +77,7 @@ namespace blockit::ledger {
 
         inline dp::Result<std::string, dp::Error> getRoot() const {
             if (leaves_.empty()) {
-                return dp::Result<std::string, dp::Error>::err(merkle_empty("Merkle tree is empty"));
+                return dp::Result<std::string, dp::Error>::err(dp::Error::invalid_argument("Merkle tree is empty"));
             }
             return dp::Result<std::string, dp::Error>::ok(root_hash_);
         }
@@ -96,7 +94,8 @@ namespace blockit::ledger {
                     dp::Error::out_of_range("Transaction index out of range"));
             }
             if (tree_levels_.empty()) {
-                return dp::Result<std::vector<std::string>, dp::Error>::err(merkle_empty("Merkle tree not built"));
+                return dp::Result<std::vector<std::string>, dp::Error>::err(
+                    dp::Error::invalid_argument("Merkle tree not built"));
             }
             size_t current_index = transaction_index;
             for (size_t level = 0; level < tree_levels_.size() - 1; level++) {
@@ -217,4 +216,4 @@ namespace blockit::ledger {
         }
     };
 
-} // namespace blockit::ledger
+} // namespace blockit

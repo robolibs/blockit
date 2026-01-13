@@ -3,7 +3,7 @@
 #include <chrono>
 #include <thread>
 
-using namespace blockit::ledger;
+using namespace blockit;
 
 TEST_SUITE("Key Identity Tests") {
     TEST_CASE("Generate permanent key") {

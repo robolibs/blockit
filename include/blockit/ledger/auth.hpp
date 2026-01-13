@@ -8,9 +8,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include <blockit/common/error.hpp>
-
-namespace blockit::ledger {
+namespace blockit {
 
     class Authenticator {
       private:
@@ -117,7 +115,8 @@ namespace blockit::ledger {
                                                                   const std::string &new_state) {
             std::unique_lock lock(mutex_);
             if (authorized_participants_.find(dp::String(participant_id.c_str())) == authorized_participants_.end()) {
-                return dp::Result<void, dp::Error>::err(unauthorized("Unauthorized participant cannot update state"));
+                return dp::Result<void, dp::Error>::err(
+                    dp::Error::permission_denied("Unauthorized participant cannot update state"));
             }
             participant_states_[dp::String(participant_id.c_str())] = dp::String(new_state.c_str());
             return dp::Result<void, dp::Error>::ok();
@@ -142,7 +141,8 @@ namespace blockit::ledger {
                                                                   const std::string &key, const std::string &value) {
             std::unique_lock lock(mutex_);
             if (authorized_participants_.find(dp::String(participant_id.c_str())) == authorized_participants_.end()) {
-                return dp::Result<void, dp::Error>::err(unauthorized("Unauthorized participant cannot set metadata"));
+                return dp::Result<void, dp::Error>::err(
+                    dp::Error::permission_denied("Unauthorized participant cannot set metadata"));
             }
             auto it = participant_metadata_.find(dp::String(participant_id.c_str()));
             if (it == participant_metadata_.end()) {
@@ -163,7 +163,7 @@ namespace blockit::ledger {
         inline dp::Result<void, dp::Error> markTransactionUsed(const std::string &tx_id) {
             std::unique_lock lock(mutex_);
             if (used_transaction_ids_.find(dp::String(tx_id.c_str())) != used_transaction_ids_.end()) {
-                return dp::Result<void, dp::Error>::err(duplicate_tx("Transaction already used"));
+                return dp::Result<void, dp::Error>::err(dp::Error::already_exists("Transaction already used"));
             }
             used_transaction_ids_.insert(dp::String(tx_id.c_str()));
             return dp::Result<void, dp::Error>::ok();
@@ -174,7 +174,7 @@ namespace blockit::ledger {
             std::unique_lock lock(mutex_);
             if (authorized_participants_.find(dp::String(participant_id.c_str())) == authorized_participants_.end()) {
                 return dp::Result<void, dp::Error>::err(
-                    unauthorized("Unauthorized participant cannot be granted capabilities"));
+                    dp::Error::permission_denied("Unauthorized participant cannot be granted capabilities"));
             }
             auto it = participant_capabilities_.find(dp::String(participant_id.c_str()));
             if (it == participant_capabilities_.end()) {
@@ -201,7 +201,7 @@ namespace blockit::ledger {
                                                             const std::string &capability) {
             std::unique_lock lock(mutex_);
             if (authorized_participants_.find(dp::String(participant_id.c_str())) == authorized_participants_.end()) {
-                return dp::Result<void, dp::Error>::err(unauthorized("Unauthorized participant"));
+                return dp::Result<void, dp::Error>::err(dp::Error::permission_denied("Unauthorized participant"));
             }
             auto it = participant_capabilities_.find(dp::String(participant_id.c_str()));
             if (it == participant_capabilities_.end()) {
@@ -238,20 +238,20 @@ namespace blockit::ledger {
             std::unique_lock lock(mutex_);
 
             if (used_transaction_ids_.find(dp::String(tx_id.c_str())) != used_transaction_ids_.end()) {
-                return dp::Result<void, dp::Error>::err(duplicate_tx("Transaction already recorded"));
+                return dp::Result<void, dp::Error>::err(dp::Error::already_exists("Transaction already recorded"));
             }
 
             if (authorized_participants_.find(dp::String(issuer_participant.c_str())) ==
                 authorized_participants_.end()) {
                 return dp::Result<void, dp::Error>::err(
-                    unauthorized("Unauthorized participant cannot perform actions"));
+                    dp::Error::permission_denied("Unauthorized participant cannot perform actions"));
             }
 
             if (!required_capability.empty()) {
                 auto cap_it = participant_capabilities_.find(dp::String(issuer_participant.c_str()));
                 if (cap_it == participant_capabilities_.end()) {
                     return dp::Result<void, dp::Error>::err(
-                        capability_missing("Participant lacks required capability"));
+                        dp::Error::permission_denied("Participant lacks required capability"));
                 }
                 bool found = false;
                 for (const auto &cap : cap_it->second) {
@@ -262,7 +262,7 @@ namespace blockit::ledger {
                 }
                 if (!found) {
                     return dp::Result<void, dp::Error>::err(
-                        capability_missing("Participant lacks required capability"));
+                        dp::Error::permission_denied("Participant lacks required capability"));
                 }
             }
 
@@ -334,7 +334,7 @@ namespace blockit::ledger {
                 auto result = dp::deserialize<dp::Mode::WITH_VERSION, Authenticator>(data);
                 return dp::Result<Authenticator, dp::Error>::ok(std::move(result));
             } catch (const std::exception &e) {
-                return dp::Result<Authenticator, dp::Error>::err(deserialization_failed(dp::String(e.what())));
+                return dp::Result<Authenticator, dp::Error>::err(dp::Error::io_error(dp::String(e.what())));
             }
         }
     };
@@ -344,4 +344,4 @@ namespace blockit::ledger {
     using DeviceManager = Authenticator;
     using AuthorizationManager = Authenticator;
 
-} // namespace blockit::ledger
+} // namespace blockit

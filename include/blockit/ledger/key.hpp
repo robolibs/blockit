@@ -1,13 +1,12 @@
 #pragma once
 
-#include <blockit/common/error.hpp>
 #include <chrono>
 #include <datapod/datapod.hpp>
 #include <keylock/keylock.hpp>
 #include <optional>
 #include <vector>
 
-namespace blockit::ledger {
+namespace blockit {
 
     /// Ed25519 keypair identity for PoA validators
     /// Header-only implementation using keylock for crypto operations
@@ -19,7 +18,7 @@ namespace blockit::ledger {
             auto keypair = crypto.generate_keypair();
 
             if (keypair.private_key.empty()) {
-                return dp::Result<Key, dp::Error>::err(signing_failed("Failed to generate keypair"));
+                return dp::Result<Key, dp::Error>::err(dp::Error::io_error("Failed to generate keypair"));
             }
 
             return dp::Result<Key, dp::Error>::ok(Key(keypair, std::nullopt));
@@ -32,11 +31,18 @@ namespace blockit::ledger {
             auto keypair = crypto.generate_keypair();
 
             if (keypair.private_key.empty()) {
-                return dp::Result<Key, dp::Error>::err(signing_failed("Failed to generate keypair"));
+                return dp::Result<Key, dp::Error>::err(dp::Error::io_error("Failed to generate keypair"));
             }
 
             return dp::Result<Key, dp::Error>::ok(Key(keypair, valid_until));
         }
+
+        /// Create from keylock::KeyPair directly
+        inline explicit Key(const keylock::KeyPair &keypair) : keypair_(keypair), valid_until_(std::nullopt) {}
+
+        /// Create from keylock::KeyPair with expiration
+        inline Key(const keylock::KeyPair &keypair, std::chrono::system_clock::time_point valid_until)
+            : keypair_(keypair), valid_until_(valid_until) {}
 
         /// Load from keypair bytes (private key can be 32 or 64 bytes for Ed25519)
         inline static dp::Result<Key, dp::Error> fromKeypair(const std::vector<uint8_t> &public_key,
@@ -73,7 +79,8 @@ namespace blockit::ledger {
         /// Sign data
         inline dp::Result<std::vector<uint8_t>, dp::Error> sign(const std::vector<uint8_t> &data) const {
             if (keypair_.private_key.empty()) {
-                return dp::Result<std::vector<uint8_t>, dp::Error>::err(signing_failed("No private key available"));
+                return dp::Result<std::vector<uint8_t>, dp::Error>::err(
+                    dp::Error::io_error("No private key available"));
             }
 
             keylock::keylock crypto(keylock::Algorithm::Ed25519);
@@ -81,7 +88,7 @@ namespace blockit::ledger {
 
             if (!result.success) {
                 return dp::Result<std::vector<uint8_t>, dp::Error>::err(
-                    signing_failed(dp::String(result.error_message.c_str())));
+                    dp::Error::io_error(dp::String(result.error_message.c_str())));
             }
 
             return dp::Result<std::vector<uint8_t>, dp::Error>::ok(result.data);
@@ -91,14 +98,15 @@ namespace blockit::ledger {
         inline dp::Result<bool, dp::Error> verify(const std::vector<uint8_t> &data,
                                                   const std::vector<uint8_t> &signature) const {
             if (keypair_.public_key.empty()) {
-                return dp::Result<bool, dp::Error>::err(verification_failed("No public key available"));
+                return dp::Result<bool, dp::Error>::err(dp::Error::invalid_argument("No public key available"));
             }
 
             keylock::keylock crypto(keylock::Algorithm::Ed25519);
             auto result = crypto.verify(data, signature, keypair_.public_key);
 
             if (!result.success) {
-                return dp::Result<bool, dp::Error>::err(verification_failed(dp::String(result.error_message.c_str())));
+                return dp::Result<bool, dp::Error>::err(
+                    dp::Error::invalid_argument(dp::String(result.error_message.c_str())));
             }
 
             return dp::Result<bool, dp::Error>::ok(result.success);
@@ -244,4 +252,4 @@ namespace blockit::ledger {
         std::optional<std::chrono::system_clock::time_point> valid_until_;
     };
 
-} // namespace blockit::ledger
+} // namespace blockit

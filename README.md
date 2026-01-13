@@ -189,7 +189,7 @@ struct Document {
 int main() {
     // 2. Initialize unified store (blockchain + storage)
     blockit::Blockit<Document> store;
-    auto crypto = std::make_shared<blockit::ledger::Crypto>("secret_key");
+    auto crypto = std::make_shared<blockit::Crypto>("secret_key");
     Document genesis{"genesis", "Genesis Doc", "Initial content"};
 
     auto init_result = store.initialize(
@@ -211,9 +211,9 @@ int main() {
     }
 
     // 4. Add block to chain (stores transactions, creates anchors)
-    blockit::ledger::Transaction<Document> tx("tx_001", doc, 100);
+    blockit::Transaction<Document> tx("tx_001", doc, 100);
     auto sign_result = tx.signTransaction(crypto);
-    std::vector<blockit::ledger::Transaction<Document>> txs{tx};
+    std::vector<blockit::Transaction<Document>> txs{tx};
 
     auto block_result = store.addBlock(txs);
     if (!block_result.is_ok()) {

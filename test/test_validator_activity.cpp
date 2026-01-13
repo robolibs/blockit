@@ -3,7 +3,7 @@
 #include <chrono>
 #include <thread>
 
-using namespace blockit::ledger;
+using namespace blockit;
 
 TEST_SUITE("Validator Activity Tests") {
     TEST_CASE("Update activity timestamp") {

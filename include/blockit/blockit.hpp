@@ -9,4 +9,4 @@
 
 // Temporary alias to ease migration of call sites
 // Existing code can continue using `chain::` until fully migrated
-namespace chain = blockit::ledger;
+namespace chain = blockit;

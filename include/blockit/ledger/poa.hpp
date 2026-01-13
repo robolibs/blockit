@@ -1,6 +1,5 @@
 #pragma once
 
-#include <blockit/common/error.hpp>
 #include <blockit/ledger/key.hpp>
 #include <blockit/ledger/validator.hpp>
 #include <chrono>
@@ -13,7 +12,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace blockit::ledger {
+namespace blockit {
 
     /// Validator's signature on a block
     struct BlockSignature {
@@ -145,7 +144,8 @@ namespace blockit::ledger {
             auto validator_id = identity.getId();
 
             if (validators_.find(validator_id) != validators_.end()) {
-                return dp::Result<void, dp::Error>::err(invalid_transaction("Validator with this ID already exists"));
+                return dp::Result<void, dp::Error>::err(
+                    dp::Error::invalid_argument("Validator with this ID already exists"));
             }
 
             validators_[validator_id] = std::make_unique<Validator>(participant_id, identity, weight);
@@ -556,4 +556,4 @@ namespace blockit::ledger {
         mutable std::mutex mutex_;
     };
 
-} // namespace blockit::ledger
+} // namespace blockit

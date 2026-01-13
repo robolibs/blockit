@@ -1,13 +1,12 @@
 #pragma once
 
-#include <blockit/common/error.hpp>
 #include <blockit/ledger/key.hpp>
 #include <chrono>
 #include <datapod/datapod.hpp>
 #include <string>
 #include <vector>
 
-namespace blockit::ledger {
+namespace blockit {
 
     /// Validator status for PoA consensus
     enum class ValidatorStatus : dp::u8 {
@@ -58,7 +57,7 @@ namespace blockit::ledger {
         inline dp::Result<std::vector<uint8_t>, dp::Error> sign(const std::vector<uint8_t> &data) const {
             if (!canSign()) {
                 return dp::Result<std::vector<uint8_t>, dp::Error>::err(
-                    signing_failed("Validator cannot sign: inactive or invalid identity"));
+                    dp::Error::io_error("Validator cannot sign: inactive or invalid identity"));
             }
             return identity_.sign(data);
         }
@@ -214,4 +213,4 @@ namespace blockit::ledger {
         dp::i64 last_seen_;
     };
 
-} // namespace blockit::ledger
+} // namespace blockit

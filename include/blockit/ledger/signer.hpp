@@ -9,9 +9,7 @@
 #include <string>
 #include <vector>
 
-#include <blockit/common/error.hpp>
-
-namespace blockit::ledger {
+namespace blockit {
 
     inline std::vector<unsigned char> stringToVector(const std::string &str) { return {str.begin(), str.end()}; }
 
@@ -93,7 +91,7 @@ namespace blockit::ledger {
                 key->public_key = keylock::keylock::from_hex(hexString);
             } catch (...) {
                 delete key;
-                return dp::Result<EVP_PKEY *, dp::Error>::err(deserialization_failed("Failed to decode public key"));
+                return dp::Result<EVP_PKEY *, dp::Error>::err(dp::Error::io_error("Failed to decode public key"));
             }
         }
         if (key->public_key.empty()) {
@@ -115,7 +113,7 @@ namespace blockit::ledger {
             auto result = crypto.verify(dataVec, sigVec, pubkey->public_key);
             return dp::Result<bool, dp::Error>::ok(result.success);
         } catch (const std::exception &e) {
-            return dp::Result<bool, dp::Error>::err(verification_failed(dp::String(e.what())));
+            return dp::Result<bool, dp::Error>::err(dp::Error::invalid_argument(dp::String(e.what())));
         }
     }
 
@@ -143,19 +141,20 @@ namespace blockit::ledger {
         inline dp::Result<std::vector<unsigned char>, dp::Error> sign(const std::string &data) {
             if (!hasKeypair_) {
                 return dp::Result<std::vector<unsigned char>, dp::Error>::err(
-                    signing_failed("No private key available for signing"));
+                    dp::Error::io_error("No private key available for signing"));
             }
             try {
                 std::vector<dp::u8> dataVec(data.begin(), data.end());
                 auto result = crypto_.sign(dataVec, keypair_.private_key);
                 if (!result.success) {
                     return dp::Result<std::vector<unsigned char>, dp::Error>::err(
-                        signing_failed(dp::String(result.error_message.c_str())));
+                        dp::Error::io_error(dp::String(result.error_message.c_str())));
                 }
                 return dp::Result<std::vector<unsigned char>, dp::Error>::ok(
                     std::vector<unsigned char>(result.data.begin(), result.data.end()));
             } catch (const std::exception &e) {
-                return dp::Result<std::vector<unsigned char>, dp::Error>::err(signing_failed(dp::String(e.what())));
+                return dp::Result<std::vector<unsigned char>, dp::Error>::err(
+                    dp::Error::io_error(dp::String(e.what())));
             }
         }
 
@@ -193,7 +192,7 @@ namespace blockit::ledger {
                 pem << "-----END PUBLIC KEY-----\n";
                 return dp::Result<std::string, dp::Error>::ok(pem.str());
             } catch (const std::exception &e) {
-                return dp::Result<std::string, dp::Error>::err(serialization_failed(dp::String(e.what())));
+                return dp::Result<std::string, dp::Error>::err(dp::Error::io_error(dp::String(e.what())));
             }
         }
 
@@ -214,4 +213,4 @@ namespace blockit::ledger {
         bool hasKeypair_ = false;
     };
 
-} // namespace blockit::ledger
+} // namespace blockit

@@ -3,7 +3,7 @@
 #include <chrono>
 #include <thread>
 
-using namespace blockit::ledger;
+using namespace blockit;
 
 TEST_SUITE("PoA Rate Limiting Tests") {
     TEST_CASE("Check can propose") {

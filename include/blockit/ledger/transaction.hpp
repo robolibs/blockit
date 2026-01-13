@@ -8,7 +8,7 @@
 
 #include "signer.hpp"
 
-namespace blockit::ledger {
+namespace blockit {
 
     using namespace std::chrono;
 
@@ -77,16 +77,17 @@ namespace blockit::ledger {
 
         inline dp::Result<bool, dp::Error> isValid() const {
             if (uuid_.empty()) {
-                return dp::Result<bool, dp::Error>::err(invalid_transaction("Transaction UUID is empty"));
+                return dp::Result<bool, dp::Error>::err(dp::Error::invalid_argument("Transaction UUID is empty"));
             }
             if (function_.to_string().empty()) {
-                return dp::Result<bool, dp::Error>::err(invalid_transaction("Transaction function is empty"));
+                return dp::Result<bool, dp::Error>::err(dp::Error::invalid_argument("Transaction function is empty"));
             }
             if (signature_.empty()) {
-                return dp::Result<bool, dp::Error>::err(invalid_transaction("Transaction signature is empty"));
+                return dp::Result<bool, dp::Error>::err(dp::Error::invalid_argument("Transaction signature is empty"));
             }
             if (priority_ < 0 || priority_ > 255) {
-                return dp::Result<bool, dp::Error>::err(invalid_transaction("Transaction priority out of range"));
+                return dp::Result<bool, dp::Error>::err(
+                    dp::Error::invalid_argument("Transaction priority out of range"));
             }
             return dp::Result<bool, dp::Error>::ok(true);
         }
@@ -110,7 +111,7 @@ namespace blockit::ledger {
                 auto result = dp::deserialize<dp::Mode::WITH_VERSION, Transaction<T>>(data);
                 return dp::Result<Transaction<T>, dp::Error>::ok(std::move(result));
             } catch (const std::exception &e) {
-                return dp::Result<Transaction<T>, dp::Error>::err(deserialization_failed(dp::String(e.what())));
+                return dp::Result<Transaction<T>, dp::Error>::err(dp::Error::io_error(dp::String(e.what())));
             }
         }
 
@@ -119,9 +120,9 @@ namespace blockit::ledger {
                 auto result = dp::deserialize<dp::Mode::WITH_VERSION, Transaction<T>>(data, size);
                 return dp::Result<Transaction<T>, dp::Error>::ok(std::move(result));
             } catch (const std::exception &e) {
-                return dp::Result<Transaction<T>, dp::Error>::err(deserialization_failed(dp::String(e.what())));
+                return dp::Result<Transaction<T>, dp::Error>::err(dp::Error::io_error(dp::String(e.what())));
             }
         }
     };
 
-} // namespace blockit::ledger
+} // namespace blockit

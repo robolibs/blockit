@@ -10,6 +10,6 @@
 #include "transaction.hpp"
 #include "validator.hpp"
 
-namespace blockit::ledger {
-    // Aggregates ledger headers under blockit::ledger
-}
+namespace blockit {
+    // Aggregates ledger headers under blockit
+} // namespace blockit

@@ -39,7 +39,7 @@ int main() {
     blockit::Blockit<UserData> store;
 
     // 2. Initialize with storage and blockchain
-    auto crypto = std::make_shared<blockit::ledger::Crypto>("demo_key");
+    auto crypto = std::make_shared<blockit::Crypto>("demo_key");
 
     UserData genesis{"Genesis User", "genesis@blockit.io", 0};
 
@@ -78,13 +78,13 @@ int main() {
     std::cout << "  [OK] Bob registered (pending anchor)\n\n";
 
     // 4. Create blockchain transactions
-    std::vector<blockit::ledger::Transaction<UserData>> transactions;
+    std::vector<blockit::Transaction<UserData>> transactions;
 
-    blockit::ledger::Transaction<UserData> tx1("tx_001", alice, 100);
+    blockit::Transaction<UserData> tx1("tx_001", alice, 100);
     tx1.signTransaction(crypto);
     transactions.push_back(tx1);
 
-    blockit::ledger::Transaction<UserData> tx2("tx_002", bob, 100);
+    blockit::Transaction<UserData> tx2("tx_002", bob, 100);
     tx2.signTransaction(crypto);
     transactions.push_back(tx2);
 

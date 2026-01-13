@@ -9,7 +9,7 @@
 #include "auth.hpp"
 #include "block.hpp"
 
-namespace blockit::ledger {
+namespace blockit {
 
     using namespace std::chrono;
 
@@ -96,7 +96,7 @@ namespace blockit::ledger {
             std::unique_lock lock(mutex_);
 
             if (blocks_.empty()) {
-                return dp::Result<void, dp::Error>::err(chain_empty("Cannot add block to empty chain"));
+                return dp::Result<void, dp::Error>::err(dp::Error::invalid_argument("Cannot add block to empty chain"));
             }
 
             Block<T> blockToAdd = newBlock;
@@ -107,7 +107,7 @@ namespace blockit::ledger {
             for (const auto &txn : blockToAdd.transactions_) {
                 if (entity_manager_.isTransactionUsed(std::string(txn.uuid_.c_str()))) {
                     std::string msg = "Duplicate transaction detected: " + std::string(txn.uuid_.c_str());
-                    return dp::Result<void, dp::Error>::err(duplicate_tx(dp::String(msg.c_str())));
+                    return dp::Result<void, dp::Error>::err(dp::Error::already_exists(dp::String(msg.c_str())));
                 }
             }
 
@@ -123,7 +123,8 @@ namespace blockit::ledger {
                 return dp::Result<void, dp::Error>::err(valid_result.error());
             }
             if (!valid_result.value()) {
-                return dp::Result<void, dp::Error>::err(invalid_block("Invalid block attempted to be added"));
+                return dp::Result<void, dp::Error>::err(
+                    dp::Error::invalid_argument("Invalid block attempted to be added"));
             }
 
             // Mark all transactions as used
@@ -153,7 +154,7 @@ namespace blockit::ledger {
             std::shared_lock lock(mutex_);
 
             if (blocks_.empty()) {
-                return dp::Result<bool, dp::Error>::err(chain_empty("Chain is empty"));
+                return dp::Result<bool, dp::Error>::err(dp::Error::invalid_argument("Chain is empty"));
             }
 
             if (blocks_.size() == 1) {
@@ -170,11 +171,11 @@ namespace blockit::ledger {
                 }
                 if (!valid_result.value()) {
                     std::string msg = "Block at index " + std::to_string(i) + " is invalid";
-                    return dp::Result<bool, dp::Error>::err(invalid_block(dp::String(msg.c_str())));
+                    return dp::Result<bool, dp::Error>::err(dp::Error::invalid_argument(dp::String(msg.c_str())));
                 }
                 if (std::string(currentBlock_.previous_hash_.c_str()) != std::string(previousBlock.hash_.c_str())) {
                     std::string msg = "Block hash chain broken at index " + std::to_string(i);
-                    return dp::Result<bool, dp::Error>::err(invalid_block(dp::String(msg.c_str())));
+                    return dp::Result<bool, dp::Error>::err(dp::Error::invalid_argument(dp::String(msg.c_str())));
                 }
             }
             return dp::Result<bool, dp::Error>::ok(true);
@@ -288,7 +289,7 @@ namespace blockit::ledger {
         inline dp::Result<Block<T>, dp::Error> getLastBlock() const {
             std::shared_lock lock(mutex_);
             if (blocks_.empty()) {
-                return dp::Result<Block<T>, dp::Error>::err(chain_empty("Chain is empty"));
+                return dp::Result<Block<T>, dp::Error>::err(dp::Error::invalid_argument("Chain is empty"));
             }
             return dp::Result<Block<T>, dp::Error>::ok(blocks_.back());
         }
@@ -310,7 +311,7 @@ namespace blockit::ledger {
                 auto result = dp::deserialize<dp::Mode::WITH_VERSION, Chain<T>>(data);
                 return dp::Result<Chain<T>, dp::Error>::ok(std::move(result));
             } catch (const std::exception &e) {
-                return dp::Result<Chain<T>, dp::Error>::err(deserialization_failed(dp::String(e.what())));
+                return dp::Result<Chain<T>, dp::Error>::err(dp::Error::io_error(dp::String(e.what())));
             }
         }
 
@@ -319,7 +320,7 @@ namespace blockit::ledger {
                 auto result = dp::deserialize<dp::Mode::WITH_VERSION, Chain<T>>(data, size);
                 return dp::Result<Chain<T>, dp::Error>::ok(std::move(result));
             } catch (const std::exception &e) {
-                return dp::Result<Chain<T>, dp::Error>::err(deserialization_failed(dp::String(e.what())));
+                return dp::Result<Chain<T>, dp::Error>::err(dp::Error::io_error(dp::String(e.what())));
             }
         }
 
@@ -393,4 +394,4 @@ namespace blockit::ledger {
         }
     };
 
-} // namespace blockit::ledger
+} // namespace blockit

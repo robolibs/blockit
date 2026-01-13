@@ -59,7 +59,7 @@ namespace blockit {
         /// @param opts Storage options
         /// @return Result indicating success or error
         Result<void, Error> initialize(const String &db_path, const String &chain_name, const String &genesis_tx_id,
-                                       const T &genesis_data, std::shared_ptr<ledger::Crypto> crypto,
+                                       const T &genesis_data, std::shared_ptr<Crypto> crypto,
                                        const storage::OpenOptions &opts = storage::OpenOptions{});
 
         /// Register a schema extension
@@ -85,15 +85,15 @@ namespace blockit {
         /// Add a block to the chain and automatically anchor all pending transactions
         /// @param transactions Vector of transactions to include in block
         /// @return Result indicating success or error
-        Result<void, Error> addBlock(const std::vector<ledger::Transaction<T>> &transactions);
+        Result<void, Error> addBlock(const std::vector<Transaction<T>> &transactions);
 
         // ===========================================
         // Query Operations
         // ===========================================
 
         /// Get blockchain
-        ledger::Chain<T> &getChain();
-        const ledger::Chain<T> &getChain() const;
+        Chain<T> &getChain();
+        const Chain<T> &getChain() const;
 
         /// Get storage layer
         storage::FileStore &getStorage();
@@ -123,7 +123,7 @@ namespace blockit {
         Result<bool, Error> verifyConsistency();
 
       private:
-        ledger::Chain<T> chain_;
+        Chain<T> chain_;
         storage::FileStore store_;
         bool initialized_ = false;
 
@@ -141,8 +141,7 @@ namespace blockit {
     template <typename T>
     Result<void, Error> Blockit<T>::initialize(const String &db_path, const String &chain_name,
                                                const String &genesis_tx_id, const T &genesis_data,
-                                               std::shared_ptr<ledger::Crypto> crypto,
-                                               const storage::OpenOptions &opts) {
+                                               std::shared_ptr<Crypto> crypto, const storage::OpenOptions &opts) {
         std::unique_lock lock(mutex_);
 
         // Open storage
@@ -158,8 +157,7 @@ namespace blockit {
         }
 
         // Initialize blockchain
-        chain_ =
-            ledger::Chain<T>(std::string(chain_name.c_str()), std::string(genesis_tx_id.c_str()), genesis_data, crypto);
+        chain_ = Chain<T>(std::string(chain_name.c_str()), std::string(genesis_tx_id.c_str()), genesis_data, crypto);
 
         // Store genesis block in storage
         auto genesis_block = chain_.blocks_[0];
@@ -208,8 +206,7 @@ namespace blockit {
         return Result<void, Error>::ok();
     }
 
-    template <typename T>
-    Result<void, Error> Blockit<T>::addBlock(const std::vector<ledger::Transaction<T>> &transactions) {
+    template <typename T> Result<void, Error> Blockit<T>::addBlock(const std::vector<Transaction<T>> &transactions) {
         std::unique_lock lock(mutex_);
         if (!initialized_)
             return Result<void, Error>::err(Error::invalid_argument("Store not initialized"));
@@ -217,7 +214,7 @@ namespace blockit {
         auto tx_guard = store_.beginTransaction();
 
         // Create blockchain block
-        ledger::Block<T> block(transactions);
+        Block<T> block(transactions);
 
         // Add block to chain
         auto add_result = chain_.addBlock(block);
@@ -291,9 +288,9 @@ namespace blockit {
         return Result<void, Error>::ok();
     }
 
-    template <typename T> ledger::Chain<T> &Blockit<T>::getChain() { return chain_; }
+    template <typename T> Chain<T> &Blockit<T>::getChain() { return chain_; }
 
-    template <typename T> const ledger::Chain<T> &Blockit<T>::getChain() const { return chain_; }
+    template <typename T> const Chain<T> &Blockit<T>::getChain() const { return chain_; }
 
     template <typename T> storage::FileStore &Blockit<T>::getStorage() { return store_; }
 

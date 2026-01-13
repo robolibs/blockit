@@ -8,7 +8,7 @@
 #include "merkle.hpp"
 #include "transaction.hpp"
 
-namespace blockit::ledger {
+namespace blockit {
 
     using namespace std::chrono;
 
@@ -67,18 +67,18 @@ namespace blockit::ledger {
             if (hash_result.success)
                 return dp::Result<std::string, dp::Error>::ok(keylock::keylock::to_hex(hash_result.data));
             else
-                return dp::Result<std::string, dp::Error>::err(hash_failed("Failed to calculate block hash"));
+                return dp::Result<std::string, dp::Error>::err(dp::Error::io_error("Failed to calculate block hash"));
         }
 
         inline dp::Result<bool, dp::Error> isValid() const {
             if (index_ < 0) {
-                return dp::Result<bool, dp::Error>::err(invalid_block("Block index is negative"));
+                return dp::Result<bool, dp::Error>::err(dp::Error::invalid_argument("Block index is negative"));
             }
             if (previous_hash_.empty()) {
-                return dp::Result<bool, dp::Error>::err(invalid_block("Block previous hash is empty"));
+                return dp::Result<bool, dp::Error>::err(dp::Error::invalid_argument("Block previous hash is empty"));
             }
             if (hash_.empty()) {
-                return dp::Result<bool, dp::Error>::err(invalid_block("Block hash is empty"));
+                return dp::Result<bool, dp::Error>::err(dp::Error::invalid_argument("Block hash is empty"));
             }
 
             auto calc_hash = calculateHash();
@@ -86,7 +86,7 @@ namespace blockit::ledger {
                 return dp::Result<bool, dp::Error>::err(calc_hash.error());
             }
             if (std::string(hash_.c_str()) != calc_hash.value()) {
-                return dp::Result<bool, dp::Error>::err(invalid_block("Block hash mismatch"));
+                return dp::Result<bool, dp::Error>::err(dp::Error::invalid_argument("Block hash mismatch"));
             }
 
             std::vector<std::string> tx_strings;
@@ -94,7 +94,7 @@ namespace blockit::ledger {
                 tx_strings.push_back(txn.toString());
             MerkleTree verification_tree(tx_strings);
             if (std::string(merkle_root_.c_str()) != verification_tree.getRootUnsafe()) {
-                return dp::Result<bool, dp::Error>::err(invalid_block("Merkle root mismatch"));
+                return dp::Result<bool, dp::Error>::err(dp::Error::invalid_argument("Merkle root mismatch"));
             }
 
             for (const auto &txn : transactions_) {
@@ -103,7 +103,8 @@ namespace blockit::ledger {
                     return dp::Result<bool, dp::Error>::err(valid.error());
                 }
                 if (!valid.value()) {
-                    return dp::Result<bool, dp::Error>::err(invalid_transaction("Block contains invalid transaction"));
+                    return dp::Result<bool, dp::Error>::err(
+                        dp::Error::invalid_argument("Block contains invalid transaction"));
                 }
             }
             return dp::Result<bool, dp::Error>::ok(true);
@@ -137,7 +138,7 @@ namespace blockit::ledger {
                 auto result = dp::deserialize<dp::Mode::WITH_VERSION, Block<T>>(data);
                 return dp::Result<Block<T>, dp::Error>::ok(std::move(result));
             } catch (const std::exception &e) {
-                return dp::Result<Block<T>, dp::Error>::err(deserialization_failed(dp::String(e.what())));
+                return dp::Result<Block<T>, dp::Error>::err(dp::Error::io_error(dp::String(e.what())));
             }
         }
 
@@ -146,9 +147,9 @@ namespace blockit::ledger {
                 auto result = dp::deserialize<dp::Mode::WITH_VERSION, Block<T>>(data, size);
                 return dp::Result<Block<T>, dp::Error>::ok(std::move(result));
             } catch (const std::exception &e) {
-                return dp::Result<Block<T>, dp::Error>::err(deserialization_failed(dp::String(e.what())));
+                return dp::Result<Block<T>, dp::Error>::err(dp::Error::io_error(dp::String(e.what())));
             }
         }
     };
 
-} // namespace blockit::ledger
+} // namespace blockit

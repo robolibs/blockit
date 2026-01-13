@@ -2,7 +2,7 @@
 #include <doctest/doctest.h>
 #include <chrono>
 
-using namespace blockit::ledger;
+using namespace blockit;
 
 TEST_SUITE("Key Serialization Tests") {
     TEST_CASE("Serialize and deserialize permanent key") {
