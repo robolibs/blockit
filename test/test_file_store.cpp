@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
 #include <blockit/storage/file_store.hpp>
@@ -128,8 +127,8 @@ TEST_CASE("Block storage") {
 
     SUBCASE("Store and retrieve block") {
         auto tx = test_store.store.beginTransaction();
-        auto stored =
-            test_store.store.storeBlock(0, String("hash_000"), String("GENESIS"), String("merkle_000"), currentTimestamp(), 0);
+        auto stored = test_store.store.storeBlock(0, String("hash_000"), String("GENESIS"), String("merkle_000"),
+                                                  currentTimestamp(), 0);
         CHECK(stored.is_ok());
         tx->commit();
 
@@ -146,8 +145,9 @@ TEST_CASE("Block storage") {
             std::string prev = (i == 0) ? "GENESIS" : "hash_" + std::to_string(i - 1);
             std::string merkle = "merkle_" + std::to_string(i);
 
-            CHECK(test_store.store.storeBlock(i, String(hash.c_str()), String(prev.c_str()), String(merkle.c_str()),
-                                              currentTimestamp(), i * 1000)
+            CHECK(test_store.store
+                      .storeBlock(i, String(hash.c_str()), String(prev.c_str()), String(merkle.c_str()),
+                                  currentTimestamp(), i * 1000)
                       .is_ok());
         }
         tx->commit();
@@ -171,7 +171,8 @@ TEST_CASE("Block storage") {
         // Continuous chain
         for (i64 i = 0; i < 5; ++i) {
             std::string hash = "hash_" + std::to_string(i);
-            test_store.store.storeBlock(i, String(hash.c_str()), String("prev"), String("merkle"), currentTimestamp(), 0);
+            test_store.store.storeBlock(i, String(hash.c_str()), String("prev"), String("merkle"), currentTimestamp(),
+                                        0);
         }
         tx->commit();
         auto cont1 = test_store.store.verifyChainContinuity();
@@ -199,8 +200,9 @@ TEST_CASE("Transaction storage") {
 
     // Create a block first
     auto tx_init = test_store.store.beginTransaction();
-    REQUIRE(test_store.store.storeBlock(1, String("block_1"), String("GENESIS"), String("merkle"), currentTimestamp(), 0)
-                .is_ok());
+    REQUIRE(
+        test_store.store.storeBlock(1, String("block_1"), String("GENESIS"), String("merkle"), currentTimestamp(), 0)
+            .is_ok());
     tx_init->commit();
 
     SUBCASE("Store and retrieve transaction") {
@@ -223,7 +225,8 @@ TEST_CASE("Transaction storage") {
         for (int i = 0; i < 20; ++i) {
             std::string tx_id = "tx_" + std::to_string(i);
             Vector<u8> payload = {static_cast<u8>(i)};
-            CHECK(test_store.store.storeTransaction(String(tx_id.c_str()), 1, currentTimestamp(), 100, payload).is_ok());
+            CHECK(
+                test_store.store.storeTransaction(String(tx_id.c_str()), 1, currentTimestamp(), 100, payload).is_ok());
         }
         tx->commit();
 
@@ -262,9 +265,9 @@ TEST_CASE("Anchoring") {
 
     // Setup: create block and transaction
     auto tx_init = test_store.store.beginTransaction();
-    REQUIRE(
-        test_store.store.storeBlock(1, String("block_1"), String("GENESIS"), String("merkle_root"), currentTimestamp(), 0)
-            .is_ok());
+    REQUIRE(test_store.store
+                .storeBlock(1, String("block_1"), String("GENESIS"), String("merkle_root"), currentTimestamp(), 0)
+                .is_ok());
     Vector<u8> tx_payload = {0x01};
     REQUIRE(test_store.store.storeTransaction(String("tx_001"), 1, currentTimestamp(), 100, tx_payload).is_ok());
     tx_init->commit();

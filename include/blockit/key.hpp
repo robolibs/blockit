@@ -58,6 +58,7 @@ namespace blockit {
             }
 
             keylock::KeyPair keypair;
+            keypair.algorithm = keylock::Algorithm::Ed25519;
             keypair.public_key = public_key;
             keypair.private_key = private_key;
             return dp::Result<Key, dp::Error>::ok(Key(keypair, std::nullopt));
@@ -71,6 +72,7 @@ namespace blockit {
             }
 
             keylock::KeyPair keypair;
+            keypair.algorithm = keylock::Algorithm::Ed25519;
             keypair.public_key = public_key;
             // private_key left empty - can only verify, not sign
             return dp::Result<Key, dp::Error>::ok(Key(keypair, std::nullopt));

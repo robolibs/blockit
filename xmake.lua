@@ -11,8 +11,7 @@ local PROJECT_VERSION = "0.0.6"
 local LIB_DEPS = {
     {"echo", "https://github.com/bresilla/echo.git", "0.0.23"},
     {"datapod", "https://github.com/robolibs/datapod.git", "0.0.36"},
-    {"keylock", "https://github.com/robolibs/keylock.git", "0.0.5"},
-    {system = "libsodium"},
+    {"keylock", "https://github.com/robolibs/keylock.git", "0.0.10"},
 }
 local EXAMPLE_DEPS = {
     -- additional deps for examples (lib deps are auto-included)
