@@ -26,7 +26,7 @@ TEST_SUITE("Missing Features - Proof of Work") {
         // CHECK(block.hash_.substr(0, 4) == "0000");  // Should start with 4 zeros
         // CHECK(block.nonce_ > 0);  // Nonce should have been incremented
         
-        WARN("Proof of Work mining not yet implemented");
+        MESSAGE("Proof of Work mining not yet implemented");
     }
     
     TEST_CASE("Difficulty adjustment (NOT IMPLEMENTED)") {
@@ -49,7 +49,7 @@ TEST_SUITE("Missing Features - Proof of Work") {
         
         // CHECK(blockchain.getCurrentDifficulty() > blockchain.getInitialDifficulty());
         
-        WARN("Difficulty adjustment not yet implemented");
+        MESSAGE("Difficulty adjustment not yet implemented");
     }
     
     TEST_CASE("Mining rewards (NOT IMPLEMENTED)") {
@@ -72,6 +72,6 @@ TEST_SUITE("Missing Features - Proof of Work") {
         // double final_balance = blockchain.getBalance("miner-001");
         // CHECK(final_balance > initial_balance);  // Miner should get reward
         
-        WARN("Mining rewards not yet implemented");
+        MESSAGE("Mining rewards not yet implemented");
     }
 }
