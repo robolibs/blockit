@@ -86,31 +86,6 @@ FetchContent_MakeAvailable(blockit)
 target_link_libraries(your_target PRIVATE blockit)
 ```
 
-### Recommended: XMake
-
-[XMake](https://xmake.io/) is a modern, fast, and cross-platform build system.
-
-**Install XMake:**
-```bash
-curl -fsSL https://xmake.io/shget.text | bash
-```
-
-**Add to your xmake.lua:**
-```lua
-add_requires("blockit")
-
-target("your_target")
-    set_kind("binary")
-    add_packages("blockit")
-    add_files("src/*.cpp")
-```
-
-**Build:**
-```bash
-xmake
-xmake run
-```
-
 ### Complete Development Environment (Nix + Direnv + Devbox)
 
 For the ultimate reproducible development environment:
