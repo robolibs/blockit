@@ -43,7 +43,7 @@ TEST_SUITE("Missing Features - Mining Rewards") {
         //     }
         // }
 
-        WARN("Block reward calculation not yet implemented");
+        MESSAGE("Block reward calculation not yet implemented");
     }
 
     TEST_CASE("Miner reward distribution (NOT IMPLEMENTED)") {
@@ -74,7 +74,7 @@ TEST_SUITE("Missing Features - Mining Rewards") {
         // CHECK(blockchain.getMinerBalance("miner2") == 300.0); // 3 blocks * 100
         // CHECK(blockchain.getTotalRewardsDistributed() == 500.0);
 
-        WARN("Miner reward distribution not yet implemented");
+        MESSAGE("Miner reward distribution not yet implemented");
     }
 
     TEST_CASE("Transaction fee rewards (NOT IMPLEMENTED)") {
@@ -110,7 +110,7 @@ TEST_SUITE("Missing Features - Mining Rewards") {
         // double expectedReward = 50.0 + totalFees; // 50 + (0.5 + 1.0 + 1.5) = 53.0
         // CHECK(blockchain.getMinerBalance("fee_miner") == expectedReward);
 
-        WARN("Transaction fee rewards not yet implemented");
+        MESSAGE("Transaction fee rewards not yet implemented");
     }
 
     TEST_CASE("Reward pool and distribution (NOT IMPLEMENTED)") {
@@ -139,7 +139,7 @@ TEST_SUITE("Missing Features - Mining Rewards") {
         // CHECK(blockchain.getParticipantBalance("miner2") == 400.0);
         // CHECK(blockchain.getRemainingPoolBalance("mining_pool") == 0.0);
 
-        WARN("Reward pool and distribution not yet implemented");
+        MESSAGE("Reward pool and distribution not yet implemented");
     }
 
     TEST_CASE("Staking rewards (NOT IMPLEMENTED)") {
@@ -171,7 +171,7 @@ TEST_SUITE("Missing Features - Mining Rewards") {
         // blockchain.claimStakingRewards("staker1");
         // CHECK(blockchain.getStakedAmount("staker1") == 1050.0); // Original + rewards
 
-        WARN("Staking rewards not yet implemented");
+        MESSAGE("Staking rewards not yet implemented");
     }
 
     TEST_CASE("Inflation and deflation mechanisms (NOT IMPLEMENTED)") {
@@ -208,6 +208,6 @@ TEST_SUITE("Missing Features - Mining Rewards") {
         // CHECK(blockchain.getTotalSupply() == expectedSupply - 50000.0);
         // CHECK(blockchain.getTotalBurned() == 50000.0);
 
-        WARN("Inflation and deflation mechanisms not yet implemented");
+        MESSAGE("Inflation and deflation mechanisms not yet implemented");
     }
 }

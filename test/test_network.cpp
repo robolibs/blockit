@@ -22,7 +22,7 @@ TEST_SUITE("Missing Features - Networking") {
         // CHECK(node1.getPeerCount() == 1);
         // CHECK(node2.getPeerCount() == 1);
         
-        WARN("P2P networking not yet implemented");
+        MESSAGE("P2P networking not yet implemented");
     }
     
     TEST_CASE("Block propagation across network (NOT IMPLEMENTED)") {
@@ -52,7 +52,7 @@ TEST_SUITE("Missing Features - Networking") {
         // CHECK(node2.hasBlock(block.hash_));
         // CHECK(node3.hasBlock(block.hash_));
         
-        WARN("Block propagation not yet implemented");
+        MESSAGE("Block propagation not yet implemented");
     }
     
     TEST_CASE("Consensus mechanism (NOT IMPLEMENTED)") {
@@ -88,7 +88,7 @@ TEST_SUITE("Missing Features - Networking") {
         //     CHECK(node.getLatestBlockHash() == consensusHash);
         // }
         
-        WARN("Consensus mechanism not yet implemented");
+        MESSAGE("Consensus mechanism not yet implemented");
     }
     
     TEST_CASE("Fork resolution (NOT IMPLEMENTED)") {
@@ -114,7 +114,7 @@ TEST_SUITE("Missing Features - Networking") {
         // // Should pick the longest/most work chain
         // CHECK(resolved.isValid());
         
-        WARN("Fork resolution not yet implemented");
+        MESSAGE("Fork resolution not yet implemented");
     }
     
     TEST_CASE("Network message validation (NOT IMPLEMENTED)") {
@@ -137,6 +137,6 @@ TEST_SUITE("Missing Features - Networking") {
         // chain::NetworkMessage validMsg = node.createTransactionMessage(tx);
         // CHECK(node.validateMessage(validMsg));
         
-        WARN("Network message validation not yet implemented");
+        MESSAGE("Network message validation not yet implemented");
     }
 }
