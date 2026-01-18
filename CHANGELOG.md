@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.0.9] - 2026-01-18
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Refactor project configuration parsing
+
 ## [0.0.8] - 2026-01-18
 
 ### <!-- 7 -->⚙️ Miscellaneous Tasks
