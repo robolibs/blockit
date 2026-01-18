@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.0.8] - 2026-01-18
+
+### <!-- 7 -->⚙️ Miscellaneous Tasks
+
+- Remove XMake build system
+
 ## [0.0.7] - 2026-01-18
 
 ### <!-- 0 -->⛰️  Features
